@@ -3,12 +3,16 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
+  "bin": {
+    "harness": "./bin/harness.js"
+  },
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
     "check": "tsc -p tsconfig.json --pretty false",
     "dev": "node --import tsx packages/cli/src/main.ts",
+    "start": "node --import tsx bin/harness.js",
     "test": "node --import tsx --test tests/**/*.test.ts"
   },
   "devDependencies": {

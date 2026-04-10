@@ -1,4 +1,5 @@
 import { HarnessRuntime, writeDefaultRuntimeConfig } from "../../harness-runtime/src/index.js";
+import { fileURLToPath } from "node:url";
 import { runArtifacts } from "./commands/handlers/artifacts.js";
 import { runAdvance } from "./commands/handlers/advance.js";
 import { runAuto } from "./commands/handlers/auto.js";
@@ -7,6 +8,7 @@ import { runContinue } from "./commands/handlers/continue.js";
 import { runConfigInit, runConfigShow } from "./commands/handlers/config-init.js";
 import { runExecute } from "./commands/handlers/execute.js";
 import { runHandoff } from "./commands/handlers/handoff.js";
+import { buildHelpPayload, runHelp } from "./commands/handlers/help.js";
 import { runLongRun } from "./commands/handlers/longrun.js";
 import { runLoop } from "./commands/handlers/loop.js";
 import { runPlan } from "./commands/handlers/plan.js";
@@ -28,6 +30,14 @@ async function execute(runtime: HarnessRuntime, rawInput: string): Promise<strin
 
   if (trimmed === "" || trimmed === "/status") {
     return runStatus(runtime.getStatus());
+  }
+
+  if (trimmed === "/help") {
+    return runHelp();
+  }
+
+  if (trimmed === "/help-json") {
+    return JSON.stringify(buildHelpPayload(), null, 2);
   }
 
   if (trimmed === "/status-json") {
@@ -285,7 +295,9 @@ export async function main(): Promise<void> {
     });
   const shouldShowOnlyPanel = input === "/status" || input.trim() === "";
   const shouldHidePanel =
+    input === "/help" ||
     input === "/status-json" ||
+    input === "/help-json" ||
     input === "/config-show" ||
     input === "/provider-check-json" ||
     input === "/provider-doctor-json" ||
@@ -309,4 +321,7 @@ export async function main(): Promise<void> {
   );
 }
 
-void main();
+const executedPath = process.argv[1];
+if (executedPath && fileURLToPath(import.meta.url) === executedPath) {
+  void main();
+}

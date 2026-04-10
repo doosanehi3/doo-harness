@@ -26,6 +26,17 @@ async function runCli(cwd: string, ...args: string[]): Promise<string> {
   return stdout.trim();
 }
 
+async function runBin(cwd: string, ...args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync("pnpm", ["run", "start", "--", ...args], {
+    cwd: HARNESS_ROOT,
+    env: {
+      ...process.env,
+      HARNESS_CWD_OVERRIDE: cwd
+    }
+  });
+  return stdout.trim();
+}
+
 function extractJsonPayload(output: string): string {
   const lines = output.split("\n");
   const startIndex = lines.findIndex(line => {
@@ -58,6 +69,24 @@ test("status-json returns machine-readable runtime status without panel text", a
     assert.equal(parsed.flow, "milestone");
     assert.equal(parsed.activeTaskId, "T1");
     assert.equal(parsed.activeTaskRecoveryHint, null);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("help-json returns machine-readable onboarding data", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-help-"));
+  try {
+    const output = await runCli(cwd, "/help-json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      overview: string;
+      quickStart: string[];
+      commandGroups: Array<{ title: string; commands: string[] }>;
+    };
+
+    assert.match(parsed.overview, /artifact-led state/i);
+    assert.ok(parsed.quickStart.some(line => line.includes("/config-init")));
+    assert.ok(parsed.commandGroups.some(group => group.title === "Provider"));
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -305,6 +334,18 @@ test("provider-doctor-json returns readiness plus smoke results", async () => {
   } finally {
     delete process.env.OPENAI_API_KEY;
     server.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("bin entry can execute help-json", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-bin-"));
+  try {
+    const output = await runBin(cwd, "/help-json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as { overview: string };
+
+    assert.match(parsed.overview, /long-running coding runtime/i);
+  } finally {
     await rm(cwd, { recursive: true, force: true });
   }
 });

@@ -67,6 +67,12 @@ Install dependencies from the repo root:
 pnpm install
 ```
 
+Run the CLI directly from the repo:
+
+```bash
+pnpm run start -- /help
+```
+
 Core verification commands:
 
 ```bash
@@ -150,6 +156,8 @@ HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /provider-doctor
 Primary commands:
 
 - `/status`
+- `/help`
+- `/help-json`
 - `/status-json`
 - `/plan <goal>`
 - `/plan-json <goal>`
