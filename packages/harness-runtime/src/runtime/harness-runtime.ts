@@ -399,27 +399,133 @@ export class HarnessRuntime {
     const storageFile = `${cliName}.tasks.json`;
     const commands = this.inferNodeCliCommands();
     const commandUsage = commands.map(command => `${cliName} ${command}`).join("\n");
-    const commandCases = commands
-      .map(command => {
-        const needsArgument = command === "add" || command === "done" || command === "remove";
-        const argLine = needsArgument
-          ? "      if (!args[0]) {\n        throw new Error(`Missing argument for " + `"${command}"` + "`);\n      }\n"
-          : "";
-        const returnValue =
-          command === "stats"
-            ? "      return { total: tasks.length, done: tasks.filter(task => task.done).length };\n"
-            : command === "list"
-              ? "      return tasks;\n"
-              : "      return { ok: true, command: \"" + command + "\" };\n";
-        return `    case "${command}": {\n${argLine}${returnValue}    }`;
-      })
+    const supports = new Set(commands);
+    const commandCases = [
+      supports.has("add")
+        ? `    case "add": {
+      const text = args.join(" ").trim();
+      if (!text) {
+        throw new Error('Missing task text for add');
+      }
+      const nextTask = { id: String(tasks.length + 1), text, done: false };
+      const updated = [...tasks, nextTask];
+      await saveTasks(updated, cwd);
+      return nextTask;
+    }`
+        : null,
+      supports.has("list")
+        ? `    case "list": {
+      return tasks;
+    }`
+        : null,
+      supports.has("done")
+        ? `    case "done": {
+      const id = args[0];
+      if (!id) {
+        throw new Error('Missing task id for done');
+      }
+      const updated = tasks.map(task => task.id === id ? { ...task, done: true } : task);
+      await saveTasks(updated, cwd);
+      return updated.find(task => task.id === id) ?? null;
+    }`
+        : null,
+      supports.has("remove")
+        ? `    case "remove": {
+      const id = args[0];
+      if (!id) {
+        throw new Error('Missing task id for remove');
+      }
+      const updated = tasks.filter(task => task.id !== id);
+      await saveTasks(updated, cwd);
+      return { removed: tasks.length !== updated.length };
+    }`
+        : null,
+      supports.has("stats")
+        ? `    case "stats": {
+      return {
+        total: tasks.length,
+        done: tasks.filter(task => task.done).length,
+        pending: tasks.filter(task => !task.done).length
+      };
+    }`
+        : null
+    ]
+      .filter((value): value is string => value !== null)
       .join("\n");
-    const commandTestBlocks = commands
-      .map(
-        command =>
-          `test("${cliName} ${command} command", () => {\n  assert.fail("Implement ${command} command");\n});\n`
-      )
-      .join("\n");
+
+    const commandTestBlocks = [
+      supports.has("add")
+        ? `test("${cliName} adds a task and persists it", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "${cliName}-"));
+  try {
+    const added = await run(["add", "buy milk"], cwd);
+    assert.equal(added.id, "1");
+    assert.equal(added.text, "buy milk");
+    const stored = JSON.parse(await readFile(join(cwd, "${storageFile}"), "utf8"));
+    assert.equal(stored.length, 1);
+    assert.equal(stored[0].text, "buy milk");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});`
+        : null,
+      supports.has("list")
+        ? `test("${cliName} lists persisted tasks", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "${cliName}-"));
+  try {
+    await writeFile(join(cwd, "${storageFile}"), JSON.stringify([{ id: "1", text: "buy milk", done: false }], null, 2) + "\\n", "utf8");
+    const listed = await run(["list"], cwd);
+    assert.equal(listed.length, 1);
+    assert.equal(listed[0].text, "buy milk");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});`
+        : null,
+      supports.has("done")
+        ? `test("${cliName} marks a task as done", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "${cliName}-"));
+  try {
+    await writeFile(join(cwd, "${storageFile}"), JSON.stringify([{ id: "1", text: "buy milk", done: false }], null, 2) + "\\n", "utf8");
+    const updated = await run(["done", "1"], cwd);
+    assert.equal(updated.done, true);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});`
+        : null,
+      supports.has("remove")
+        ? `test("${cliName} removes a task", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "${cliName}-"));
+  try {
+    await writeFile(join(cwd, "${storageFile}"), JSON.stringify([{ id: "1", text: "buy milk", done: false }], null, 2) + "\\n", "utf8");
+    const result = await run(["remove", "1"], cwd);
+    assert.equal(result.removed, true);
+    const listed = await run(["list"], cwd);
+    assert.equal(listed.length, 0);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});`
+        : null,
+      supports.has("stats")
+        ? `test("${cliName} reports task stats", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "${cliName}-"));
+  try {
+    await writeFile(join(cwd, "${storageFile}"), JSON.stringify([
+      { id: "1", text: "buy milk", done: false },
+      { id: "2", text: "ship code", done: true }
+    ], null, 2) + "\\n", "utf8");
+    const stats = await run(["stats"], cwd);
+    assert.deepEqual(stats, { total: 2, done: 1, pending: 1 });
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});`
+        : null
+    ]
+      .filter((value): value is string => value !== null)
+      .join("\n\n");
 
     await writeFile(join(this.session.cwd, "package.json"), JSON.stringify(packageJson, null, 2) + "\n", "utf8");
     await writeFile(
@@ -439,7 +545,7 @@ export class HarnessRuntime {
     );
     await writeFile(
       join(this.session.cwd, "tests", `${cliName}.test.js`),
-      `import test from "node:test";\nimport assert from "node:assert/strict";\n\n${commandTestBlocks}`,
+      `import test from "node:test";\nimport assert from "node:assert/strict";\nimport { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";\nimport { tmpdir } from "node:os";\nimport { join } from "node:path";\nimport { run } from "../src/${cliName}.js";\n\n${commandTestBlocks}\n`,
       "utf8"
     );
   }
@@ -700,11 +806,17 @@ export class HarnessRuntime {
         return "Start a new task or create a new long-running plan.";
       }
       if (this.session.state.blocker) {
-        if (this.isAutoRecoverableBlockedTask(taskId)) {
-          return this.session.state.blocker.includes("no concrete file changes")
-            ? "Use /continue to retry implementation against the scaffold files and produce real code changes."
-            : "Use /continue to generate the missing task output, then rerun manual review automatically.";
+      if (this.isAutoRecoverableBlockedTask(taskId)) {
+        if (taskId && this.session.taskState.taskRecoveryHints[taskId] === "implementation_fix_required") {
+          return "Use /continue to return to implementation and fix the failing verification command.";
         }
+        if (taskId && this.isLegacyImplementationVerificationRecovery(taskId)) {
+          return "Use /continue to return to implementation and fix the failing verification command.";
+        }
+        return this.session.state.blocker.includes("no concrete file changes")
+          ? "Use /continue to retry implementation against the scaffold files and produce real code changes."
+          : "Use /continue to generate the missing task output, then rerun manual review automatically.";
+      }
         return verifyCommands && verifyCommands.length > 0
           ? `Resolve the blocker, then use /unblock and rerun ${this.formatVerifyCommands(verifyCommands)}.`
           : "Resolve the blocker, then use /unblock.";

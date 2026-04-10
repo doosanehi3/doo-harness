@@ -3,10 +3,14 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { AddressInfo } from "node:net";
 import { once } from "node:events";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HarnessRuntime } from "../packages/harness-runtime/src/runtime/harness-runtime.js";
+
+const execFileAsync = promisify(execFile);
 
 test("implementation task can use an openai-compatible worker model through the agent path", async () => {
   const server = createServer((_, res) => {
@@ -274,6 +278,12 @@ test("blank node cli repos get a minimal bootstrap before implementation agent r
     const readmeBody = await readFile(join(cwd, "README.md"), "utf8");
     const sourceBody = await readFile(join(cwd, "src", "sample-tool.js"), "utf8");
     const testBody = await readFile(join(cwd, "tests", "sample-tool.test.js"), "utf8");
+    await execFileAsync("pnpm", ["run", "test"], {
+      cwd,
+      env: {
+        ...process.env
+      }
+    });
 
     assert.equal(await readFile(join(cwd, "package.json"), "utf8").then(body => body.includes("\"sample-tool\"")), true);
     assert.match(readmeBody, /sample-tool/);
@@ -281,8 +291,8 @@ test("blank node cli repos get a minimal bootstrap before implementation agent r
     assert.match(sourceBody, /sample-tool\.tasks\.json/);
     assert.match(sourceBody, /case "add"/);
     assert.match(sourceBody, /case "list"/);
-    assert.match(testBody, /Implement add command/);
-    assert.match(testBody, /Implement list command/);
+    assert.match(testBody, /adds a task and persists it/);
+    assert.match(testBody, /lists persisted tasks/);
   } finally {
     server.close();
     await rm(cwd, { recursive: true, force: true });

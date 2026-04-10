@@ -89,6 +89,20 @@ export function buildNoChangeRecoveryPrompt(input: TaskContextInput): string {
     lines.push(input.activePlanExcerpt);
   }
 
+  if (input.lastVerificationExcerpt) {
+    lines.push("Last verification excerpt:");
+    lines.push(input.lastVerificationExcerpt);
+  }
+
+  if (input.lastTaskOutputExcerpt) {
+    lines.push("Previous task output excerpt:");
+    lines.push(input.lastTaskOutputExcerpt);
+  }
+
+  if (input.lastVerificationExcerpt?.includes("Implement ")) {
+    lines.push("Replace placeholder failing tests such as assert.fail(...) with concrete expectations, then implement the corresponding command behavior.");
+  }
+
   if (input.scaffoldFiles && input.scaffoldFiles.length > 0) {
     lines.push("Modify at least one of these existing scaffold files:");
     for (const file of input.scaffoldFiles) {
