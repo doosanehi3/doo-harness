@@ -55,6 +55,41 @@ export function buildExecutionPrompt(input: TaskContextInput): string {
   return lines.join("\n");
 }
 
+export function buildNoChangeRecoveryPrompt(input: TaskContextInput): string {
+  const lines = [
+    "The previous implementation turn finished without making any concrete file changes outside .harness.",
+    "Retry the task now and use write, edit, or bash to change repository files before you finish.",
+    `Goal: ${input.goalSummary ?? "(none)"}`,
+    `Milestone: ${input.activeMilestoneId ?? "(none)"}`,
+    `Task: ${input.activeTaskId ?? "(none)"}`,
+    `Task kind: ${input.taskKind ?? "(none)"}`,
+    `Expected output: ${input.expectedOutput ?? "(none)"}`,
+    `Current blocker: ${input.blocker ?? "(none)"}`
+  ];
+
+  if (input.activeSpecExcerpt) {
+    lines.push("Spec excerpt:");
+    lines.push(input.activeSpecExcerpt);
+  }
+
+  if (input.activePlanExcerpt) {
+    lines.push("Plan excerpt:");
+    lines.push(input.activePlanExcerpt);
+  }
+
+  if (input.scaffoldFiles && input.scaffoldFiles.length > 0) {
+    lines.push("Modify at least one of these existing scaffold files:");
+    for (const file of input.scaffoldFiles) {
+      lines.push(`- ${file}`);
+    }
+  } else {
+    lines.push("Create or modify at least one non-.harness file in the working directory.");
+  }
+
+  lines.push("Do not answer with only a summary. Make the file changes first, then report completion or a real blocker.");
+  return lines.join("\n");
+}
+
 export function buildVerificationPrompt(input: TaskContextInput & { verifyCommands?: string[] | null }): string {
   const lines = [
     "Verify the current task independently and summarize whether the work appears complete.",

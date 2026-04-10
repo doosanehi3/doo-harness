@@ -130,6 +130,96 @@ test("implementation task blocks when agent-mode provider produces no concrete f
   }
 });
 
+test("implementation task retries once before blocking when first agent turn makes no changes", async () => {
+  let requestCount = 0;
+  const server = createServer((_, res) => {
+    requestCount += 1;
+    res.setHeader("content-type", "application/json");
+    if (requestCount === 1) {
+      res.end(JSON.stringify({ choices: [{ message: { content: "done" } }] }));
+      return;
+    }
+    if (requestCount === 2) {
+      res.end(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                tool_calls: [
+                  {
+                    id: "call_1",
+                    function: {
+                      name: "write",
+                      arguments: JSON.stringify({ path: "implementation.txt", content: "second pass change" })
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        })
+      );
+      return;
+    }
+
+    res.end(JSON.stringify({ choices: [{ message: { content: "done after retry" } }] }));
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-runtime-provider-retry-"));
+
+  try {
+    process.env.OPENAI_API_KEY = "test-key";
+    const { port } = server.address() as AddressInfo;
+    await mkdir(join(cwd, ".harness"), { recursive: true });
+    await writeFile(
+      join(cwd, ".harness", "config.json"),
+      JSON.stringify(
+        {
+          models: {
+            worker: {
+              id: "gpt-test",
+              provider: "openai-compatible",
+              name: "gpt-test",
+              baseUrl: `http://127.0.0.1:${port}`,
+              apiPath: "/v1/chat/completions",
+              apiKeyEnvVar: "OPENAI_API_KEY"
+            }
+          },
+          execution: {
+            workerMode: "agent"
+          }
+        },
+        null,
+        2
+      ) + "\n",
+      "utf8"
+    );
+
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("Provider-backed retry worker demo", true);
+    await runtime.advanceMilestone();
+    const taskId = await runtime.executeCurrentTask();
+    const taskState = runtime.getTaskStateSnapshot();
+    const status = runtime.getStatus();
+    const note = await readFile(taskState.taskOutputs[taskId], "utf8");
+    const implementation = await readFile(join(cwd, "implementation.txt"), "utf8");
+
+    assert.equal(taskId, "T2");
+    assert.equal(status.phase, "implementing");
+    assert.equal(status.activeTaskStatus, "in_progress");
+    assert.equal(status.activeTaskRecoveryHint, null);
+    assert.equal(status.blocker, null);
+    assert.equal(implementation, "second pass change");
+    assert.match(note, /implementation\.txt/);
+    assert.equal(requestCount, 3);
+  } finally {
+    server.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("blank node cli repos get a minimal bootstrap before implementation agent runs", async () => {
   const server = createServer((_, res) => {
     res.setHeader("content-type", "application/json");

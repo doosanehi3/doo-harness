@@ -15,7 +15,7 @@ import { parseCommand } from "../router/parse-command.js";
 import { createInitialTaskState, loadTaskState, saveTaskState, type TaskState } from "../state/task-state.js";
 import { loadRunState, saveRunState } from "../state/run-state.js";
 import { createHandoff } from "../handoff/handoff-builder.js";
-import { buildExecutionPrompt, buildVerificationPrompt } from "../context/task-context.js";
+import { buildExecutionPrompt, buildNoChangeRecoveryPrompt, buildVerificationPrompt } from "../context/task-context.js";
 import { parseMilestones } from "../context/milestone-tasks.js";
 import { parsePlanTasks } from "../context/plan-tasks.js";
 import { validateBashCommandForPhase } from "../policy/bash-policy.js";
@@ -755,6 +755,41 @@ export class HarnessRuntime {
     } catch {
       return null;
     }
+  }
+
+  private async buildTaskContextInput(taskId: string, role: ExecutionRole | null) {
+    return {
+      goalSummary: this.session.state.goalSummary,
+      activePlanPath: this.session.state.activePlanPath,
+      activePlanExcerpt: await this.readArtifactExcerpt(this.session.state.activePlanPath),
+      activeSpecExcerpt: await this.readArtifactExcerpt(this.session.state.activeSpecPath),
+      activeMilestoneId: this.session.state.activeMilestoneId,
+      activeTaskId: taskId,
+      taskKind: this.session.taskState.taskKinds[taskId] ?? null,
+      taskOwner: this.session.taskState.taskOwners[taskId] ?? null,
+      expectedOutput: this.session.taskState.taskExpectedOutputs[taskId] ?? null,
+      taskStatus: this.session.taskState.tasks[taskId] ?? null,
+      blocker: this.session.taskState.taskBlockers[taskId] ?? this.session.state.blocker,
+      scaffoldFiles: role === "worker" ? this.getBootstrapScaffoldFiles() : null
+    };
+  }
+
+  private async runWorkerRetryAfterNoChanges(
+    taskId: string,
+    role: ExecutionRole | null,
+    beforeSnapshot: Map<string, string> | null
+  ): Promise<{ summary: string; changedFiles: string[] }> {
+    const retrySummary = await this.runAgentTurn(
+      buildNoChangeRecoveryPrompt(await this.buildTaskContextInput(taskId, role))
+    );
+    const changedFiles =
+      beforeSnapshot === null
+        ? []
+        : this.diffWorkspaceSnapshots(beforeSnapshot, await this.captureWorkspaceFileSnapshot());
+    return {
+      summary: `${retrySummary}\n\nAutomatic retry: executed after the first implementation turn produced no concrete file changes.`,
+      changedFiles
+    };
   }
 
   private getOrderedTaskIds(): string[] {
@@ -1729,40 +1764,31 @@ export class HarnessRuntime {
             })
           : null;
 
-      const agentSummary =
+      const taskContextInput = await this.buildTaskContextInput(taskId, role);
+      let agentSummary =
         this.session.state.currentFlow === "worker_validator"
           ? workerResult?.summary ?? `Worker executing task ${taskId}.`
           : useIsolatedExecutor
             ? workerResult?.summary ??
               `${role === "planner" ? "Planner" : role === "validator" ? "Validator" : "Worker"} executing task ${taskId}.`
           : await this.runAgentTurn(
-              buildExecutionPrompt({
-                goalSummary: this.session.state.goalSummary,
-                activePlanPath: this.session.state.activePlanPath,
-                activePlanExcerpt: await this.readArtifactExcerpt(this.session.state.activePlanPath),
-                activeSpecExcerpt: await this.readArtifactExcerpt(this.session.state.activeSpecPath),
-                activeMilestoneId: this.session.state.activeMilestoneId,
-                activeTaskId: taskId,
-                taskKind: taskId
-                  ? this.session.taskState.taskKinds[taskId] ?? null
-                  : null,
-                taskOwner: taskId
-                  ? this.session.taskState.taskOwners[taskId] ?? null
-                  : null,
-                expectedOutput: taskId
-                  ? this.session.taskState.taskExpectedOutputs[taskId] ?? null
-                  : null,
-                taskStatus: taskId
-                  ? this.session.taskState.tasks[taskId] ?? null
-                  : null,
-                blocker: taskId ? this.session.taskState.taskBlockers[taskId] ?? this.session.state.blocker : this.session.state.blocker,
-                scaffoldFiles: role === "worker" ? this.getBootstrapScaffoldFiles() : null
-              })
+              buildExecutionPrompt(taskContextInput)
             );
-      const changedFiles =
+      let changedFiles =
         beforeSnapshot === null
           ? []
           : this.diffWorkspaceSnapshots(beforeSnapshot, await this.captureWorkspaceFileSnapshot());
+
+      if (
+        role === "worker" &&
+        executionMode === "agent" &&
+        activeModel.provider !== "local" &&
+        changedFiles.length === 0
+      ) {
+        const retry = await this.runWorkerRetryAfterNoChanges(taskId, role, beforeSnapshot);
+        agentSummary = retry.summary;
+        changedFiles = retry.changedFiles;
+      }
 
       const executionNoteBody = [
         "# Task Output",
