@@ -37,6 +37,12 @@ references:
 
 Those lessons point toward runtime ownership, not just stronger workflow modes.
 
+This is the specific reason the phrase `long-running runtime` appears so often
+in these docs: both external harness-engineering references point toward a
+system that can survive long tasks through explicit state, verification, and
+recovery mechanisms, not merely through better prompts or stronger workflow
+commands.
+
 ## What Changed
 
 As the harness matured, some layers turned out not to be differentiators:
