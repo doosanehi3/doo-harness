@@ -299,6 +299,71 @@ test("blank node cli repos get a minimal bootstrap before implementation agent r
   }
 });
 
+test("blank node cli bootstrap generalizes to custom command sets", async () => {
+  const server = createServer((_, res) => {
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ choices: [{ message: { content: "done" } }] }));
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-runtime-provider-bootstrap-generic-"));
+
+  try {
+    process.env.OPENAI_API_KEY = "test-key";
+    const { port } = server.address() as AddressInfo;
+    await mkdir(join(cwd, ".harness"), { recursive: true });
+    await writeFile(
+      join(cwd, ".harness", "config.json"),
+      JSON.stringify(
+        {
+          models: {
+            worker: {
+              id: "gpt-test",
+              provider: "openai-compatible",
+              name: "gpt-test",
+              baseUrl: `http://127.0.0.1:${port}`,
+              apiPath: "/v1/chat/completions",
+              apiKeyEnvVar: "OPENAI_API_KEY"
+            }
+          },
+          execution: {
+            workerMode: "agent"
+          }
+        },
+        null,
+        2
+      ) + "\n",
+      "utf8"
+    );
+
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan(
+      "Build a dependency-free Node.js CLI called notes-cli that stores notes in a local JSON file and supports add, list, search, and archive commands with tests and a README.",
+      true
+    );
+    await runtime.advanceMilestone();
+    const taskId = await runtime.executeCurrentTask();
+    const sourceBody = await readFile(join(cwd, "src", "notes-cli.js"), "utf8");
+    const testBody = await readFile(join(cwd, "tests", "notes-cli.test.js"), "utf8");
+    await execFileAsync("pnpm", ["run", "test"], {
+      cwd,
+      env: {
+        ...process.env
+      }
+    });
+
+    assert.equal(taskId, "T2");
+    assert.match(sourceBody, /case "search"/);
+    assert.match(sourceBody, /case "archive"/);
+    assert.match(testBody, /notes-cli search command/);
+    assert.match(testBody, /notes-cli archive command/);
+  } finally {
+    server.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("implementation task can use an openai-compatible worker model with responses-style function_call payloads", async () => {
   const server = createServer((_, res) => {
     res.setHeader("content-type", "application/json");

@@ -400,6 +400,9 @@ export class HarnessRuntime {
     const commands = this.inferNodeCliCommands();
     const commandUsage = commands.map(command => `${cliName} ${command}`).join("\n");
     const supports = new Set(commands);
+    const genericCommands = commands.filter(
+      command => !["add", "list", "done", "remove", "stats"].includes(command)
+    );
     const commandCases = [
       supports.has("add")
         ? `    case "add": {
@@ -450,6 +453,13 @@ export class HarnessRuntime {
     }`
         : null
     ]
+      .concat(
+        genericCommands.map(
+          command => `    case "${command}": {
+      return { ok: true, command: "${command}", args };
+    }`
+        )
+      )
       .filter((value): value is string => value !== null)
       .join("\n");
 
@@ -524,6 +534,15 @@ export class HarnessRuntime {
 });`
         : null
     ]
+      .concat(
+        genericCommands.map(
+          command => `test("${cliName} ${command} command", async () => {
+  const result = await run(["${command}", "example"], process.cwd());
+  assert.equal(result.ok, true);
+  assert.equal(result.command, "${command}");
+});`
+        )
+      )
       .filter((value): value is string => value !== null)
       .join("\n\n");
 
