@@ -130,6 +130,11 @@ This also means a `roach-pi`-style approach can work, but only if the overlay is
 thick enough to own real runtime semantics instead of acting as prompt-only
 workflow decoration.
 
+In that sense, `roach-pi` should not be read as having ignored long-running
+concerns. A better reading is that it addresses those concerns primarily from a
+workflow-first angle, whereas this harness tries to pull them further down into
+runtime primitives.
+
 So the important distinction is not:
 
 - independent runtime versus pi substrate
