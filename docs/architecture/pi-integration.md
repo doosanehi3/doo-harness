@@ -214,6 +214,9 @@ not enough. Long-running development work still needs a runtime that owns:
 - reset and resume semantics
 - tool access policy
 
+If these stay only at the workflow-shell level, they remain easier to bypass,
+weaker to recover from, and harder to treat as hard system invariants.
+
 The long-term integration goal is therefore:
 
 - let `pi-coding-agent` provide more of the substrate
