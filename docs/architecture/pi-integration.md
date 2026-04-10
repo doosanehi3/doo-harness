@@ -168,6 +168,17 @@ The trade-off is that workflow-first solutions can leave long-running semantics
 too implicit unless the overlay also owns real state, verification, and
 recovery behavior.
 
+At this point, the main benefits of the original independent-runtime path have
+already been harvested:
+
+- we clarified what runtime ownership actually means
+- we proved the value of artifact-first long-running primitives
+- we identified the specific semantics that must not be lost in a migration
+
+Because of that, the balance shifts over time: continuing to rebuild substrate
+concerns locally becomes less attractive, while deeper reuse of
+`pi-coding-agent` becomes more attractive.
+
 ## Migration Principle
 
 When deciding whether a capability belongs in the harness or in pi:
