@@ -100,6 +100,9 @@ The current direction of this harness is explicitly aimed at that ownership:
 In other words, the goal is not to add more workflow commands on top of pi, but
 to ensure that the overlay layer actually controls long-running semantics.
 
+So yes, ownership can still live in an overlay layer, but only when that layer
+is thick enough to act like a runtime rather than a prompt policy shim.
+
 ## Long-Term Direction
 
 Long term, the likely shape is:
