@@ -364,6 +364,79 @@ test("blank node cli bootstrap generalizes to custom command sets", async () => 
   }
 });
 
+test("blank catalog webapp repos get a runnable promotional catalog bootstrap", async () => {
+  const server = createServer((_, res) => {
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ choices: [{ message: { content: "done" } }] }));
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-runtime-provider-bootstrap-webapp-"));
+
+  try {
+    process.env.OPENAI_API_KEY = "test-key";
+    const { port } = server.address() as AddressInfo;
+    await mkdir(join(cwd, ".harness"), { recursive: true });
+    await writeFile(
+      join(cwd, ".harness", "config.json"),
+      JSON.stringify(
+        {
+          models: {
+            worker: {
+              id: "gpt-test",
+              provider: "openai-compatible",
+              name: "gpt-test",
+              baseUrl: `http://127.0.0.1:${port}`,
+              apiPath: "/v1/chat/completions",
+              apiKeyEnvVar: "OPENAI_API_KEY"
+            }
+          },
+          execution: {
+            workerMode: "agent"
+          }
+        },
+        null,
+        2
+      ) + "\n",
+      "utf8"
+    );
+
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan(
+      "Build an interactive clothing product promotional catalog webapp with a branded landing page, catalog listing, category/tag/season filters, product detail pages, related products, inquiry/interest CTA, URL-backed filter state, responsive layout, mock data, tests, and a README.",
+      true
+    );
+    await runtime.advanceMilestone();
+    const taskId = await runtime.executeCurrentTask();
+    const note = await readFile(runtime.getTaskStateSnapshot().taskOutputs[taskId], "utf8");
+    const htmlBody = await readFile(join(cwd, "index.html"), "utf8");
+    const appBody = await readFile(join(cwd, "src", "app.js"), "utf8");
+    const catalogBody = await readFile(join(cwd, "src", "catalog.js"), "utf8");
+    const testBody = await readFile(join(cwd, "tests", "catalog.test.js"), "utf8");
+    await execFileAsync("pnpm", ["run", "test"], {
+      cwd,
+      env: {
+        ...process.env
+      }
+    });
+
+    assert.equal(taskId, "T2");
+    assert.match(note, /index\.html/);
+    assert.match(note, /src\/app\.js/);
+    assert.match(htmlBody, /catalog-grid/);
+    assert.match(htmlBody, /product-detail/);
+    assert.match(appBody, /renderCatalog/);
+    assert.match(catalogBody, /filterProducts/);
+    assert.match(catalogBody, /getProductBySlug/);
+    assert.match(testBody, /filterProducts/);
+    assert.match(testBody, /getProductBySlug/);
+  } finally {
+    server.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("implementation task can use an openai-compatible worker model with responses-style function_call payloads", async () => {
   const server = createServer((_, res) => {
     res.setHeader("content-type", "application/json");
