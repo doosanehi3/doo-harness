@@ -24,9 +24,120 @@ import { runUnblock } from "./commands/handlers/unblock.js";
 import { runVerify } from "./commands/handlers/verify.js";
 import { renderRuntimePanel } from "../../tui/src/index.js";
 
-async function execute(runtime: HarnessRuntime, rawInput: string): Promise<string> {
+function parseCliInvocation(argv: string[]): { runtimeCwd: string; input: string } {
+  const args = [...argv];
+  let runtimeCwd = process.env.HARNESS_CWD_OVERRIDE ?? process.cwd();
+
+  while (args.length > 0) {
+    const current = args[0];
+    if (!current) break;
+    if (current === "--") {
+      args.shift();
+      continue;
+    }
+    if (current === "--cwd") {
+      args.shift();
+      const next = args.shift();
+      if (next) {
+        runtimeCwd = next;
+      }
+      continue;
+    }
+    if (current.startsWith("--cwd=")) {
+      runtimeCwd = current.slice("--cwd=".length) || runtimeCwd;
+      args.shift();
+      continue;
+    }
+    break;
+  }
+
+  return {
+    runtimeCwd,
+    input: normalizeCliInput(args)
+  };
+}
+
+function normalizeCliInput(args: string[]): string {
+  const trimmedArgs = args.map(arg => arg.trim()).filter(Boolean);
+  if (trimmedArgs.length === 0) {
+    return "";
+  }
+
+  const [command, ...rest] = trimmedArgs;
+  if (command.startsWith("/")) {
+    return trimmedArgs.join(" ").trim();
+  }
+
+  const json = rest.includes("--json");
+  const payload = rest.filter(token => token !== "--json");
+  const join = (base: string, parts: string[] = []): string => [base, ...parts].join(" ").trim();
+
+  switch (command) {
+    case "help":
+      return json ? "/help-json" : "/help";
+    case "status":
+      return json ? "/status-json" : "/status";
+    case "artifacts":
+      return json ? "/artifacts-json" : "/artifacts";
+    case "plan":
+      return json ? join("/plan-json", payload) : join("/plan", payload);
+    case "longrun":
+      return json ? join("/longrun-json", payload) : join("/longrun", payload);
+    case "continue":
+      return json ? "/continue-json" : "/continue";
+    case "loop":
+      return json ? join("/loop-json", payload) : join("/loop", payload);
+    case "execute":
+      return json ? "/execute-json" : "/execute";
+    case "verify":
+      return json ? "/verify-json" : "/verify";
+    case "review":
+      return json ? "/review-json" : "/review";
+    case "handoff":
+      return json ? "/handoff-json" : "/handoff";
+    case "advance":
+      return json ? "/advance-json" : "/advance";
+    case "resume":
+      return json ? "/resume-json" : "/resume";
+    case "reset":
+      return json ? "/reset-json" : "/reset";
+    case "unblock":
+      return json ? "/unblock-json" : "/unblock";
+    case "block":
+      return json ? join("/block-json", payload) : join("/block", payload);
+    case "config": {
+      const [action, ...configArgs] = payload;
+      if (action === "show") {
+        return "/config-show";
+      }
+      if (action === "init") {
+        if (configArgs[0] === "openai-codex") {
+          return "/config-init-openai-codex";
+        }
+        return join("/config-init", configArgs);
+      }
+      return trimmedArgs.join(" ").trim();
+    }
+    case "provider": {
+      const [action, ...providerArgs] = payload;
+      if (action === "check") {
+        return json ? "/provider-check-json" : "/provider-check";
+      }
+      if (action === "doctor") {
+        return json ? "/provider-doctor-json" : "/provider-doctor";
+      }
+      if (action === "smoke") {
+        return json ? join("/provider-smoke-json", providerArgs) : join("/provider-smoke", providerArgs);
+      }
+      return trimmedArgs.join(" ").trim();
+    }
+    default:
+      return trimmedArgs.join(" ").trim();
+  }
+}
+
+async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: string): Promise<string> {
   const trimmed = rawInput.trim();
-  const runtimeCwd = process.env.HARNESS_CWD_OVERRIDE ?? process.cwd();
 
   if (trimmed === "" || trimmed === "/status") {
     return runStatus(runtime.getStatus());
@@ -248,11 +359,9 @@ async function execute(runtime: HarnessRuntime, rawInput: string): Promise<strin
 }
 
 export async function main(): Promise<void> {
-  const args = process.argv.slice(2);
-  const input = (args[0] === "--" ? args.slice(1) : args).join(" ").trim();
-  const runtimeCwd = process.env.HARNESS_CWD_OVERRIDE ?? process.cwd();
+  const { runtimeCwd, input } = parseCliInvocation(process.argv.slice(2));
   const runtime = await HarnessRuntime.create(runtimeCwd);
-  const output = await execute(runtime, input);
+  const output = await execute(runtime, input, runtimeCwd);
   const status = runtime.getStatus();
   const panel = renderRuntimePanel({
       phase: status.phase,

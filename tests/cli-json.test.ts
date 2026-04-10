@@ -37,6 +37,16 @@ async function runBin(cwd: string, ...args: string[]): Promise<string> {
   return stdout.trim();
 }
 
+async function runBinWithArgs(...args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync("pnpm", ["run", "start", "--", ...args], {
+    cwd: HARNESS_ROOT,
+    env: {
+      ...process.env
+    }
+  });
+  return stdout.trim();
+}
+
 function extractJsonPayload(output: string): string {
   const lines = output.split("\n");
   const startIndex = lines.findIndex(line => {
@@ -85,7 +95,7 @@ test("help-json returns machine-readable onboarding data", async () => {
     };
 
     assert.match(parsed.overview, /artifact-led state/i);
-    assert.ok(parsed.quickStart.some(line => line.includes("/config-init")));
+    assert.ok(parsed.quickStart.some(line => line.includes("config init")));
     assert.ok(parsed.commandGroups.some(group => group.title === "Provider"));
   } finally {
     await rm(cwd, { recursive: true, force: true });
@@ -345,6 +355,122 @@ test("bin entry can execute help-json", async () => {
     const parsed = JSON.parse(extractJsonPayload(output)) as { overview: string };
 
     assert.match(parsed.overview, /long-running coding runtime/i);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("bin entry accepts --cwd for target repo selection", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-bin-cwd-"));
+  try {
+    const output = await runBinWithArgs("--cwd", cwd, "/status-json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as { phase: string; flow: string };
+
+    assert.equal(parsed.phase, "idle");
+    assert.equal(parsed.flow, "auto");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("bin entry supports product-style status --json subcommands", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-bin-status-subcmd-"));
+  try {
+    const output = await runBinWithArgs("--cwd", cwd, "status", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as { phase: string; flow: string };
+
+    assert.equal(parsed.phase, "idle");
+    assert.equal(parsed.flow, "auto");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("bin entry supports product-style longrun --json subcommands", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-bin-longrun-subcmd-"));
+  try {
+    const output = await runBinWithArgs("--cwd", cwd, "longrun", "--json", "CLI subcommand demo");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      specPath: string;
+      planPath: string;
+      milestonePath?: string;
+      status: { phase: string; flow: string };
+    };
+
+    assert.match(parsed.specPath, /spec\.md$/);
+    assert.match(parsed.planPath, /plan\.md$/);
+    assert.match(parsed.milestonePath ?? "", /milestones\.md$/);
+    assert.equal(parsed.status.phase, "planning");
+    assert.equal(parsed.status.flow, "milestone");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("bin entry supports product-style provider smoke --json subcommands", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-bin-provider-smoke-subcmd-"));
+  const server = createServer((_, res) => {
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ choices: [{ message: { content: "READY" } }] }));
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    process.env.OPENAI_API_KEY = "test-key";
+    const address = server.address() as AddressInfo;
+    const { writeFile, mkdir } = await import("node:fs/promises");
+    await mkdir(join(cwd, ".harness"), { recursive: true });
+    await writeFile(
+      join(cwd, ".harness", "config.json"),
+      JSON.stringify(
+        {
+          models: {
+            default: {
+              id: "gpt-test",
+              provider: "openai-compatible",
+              baseUrl: `http://127.0.0.1:${address.port}`
+            }
+          }
+        },
+        null,
+        2
+      ) + "\n",
+      "utf8"
+    );
+
+    const output = await runBinWithArgs("--cwd", cwd, "provider", "smoke", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      role: string;
+      provider: string;
+      modelId: string;
+      stopReason: string;
+      text: string;
+    };
+
+    assert.equal(parsed.role, "default");
+    assert.equal(parsed.provider, "openai-compatible");
+    assert.equal(parsed.modelId, "gpt-test");
+    assert.equal(parsed.stopReason, "stop");
+    assert.equal(parsed.text, "READY");
+  } finally {
+    delete process.env.OPENAI_API_KEY;
+    server.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("bin entry uses --cwd for product-style config show", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-bin-config-show-subcmd-"));
+  try {
+    await runCli(cwd, "/config-init-openai-codex");
+    const output = await runBinWithArgs("--cwd", cwd, "config", "show");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      models: { default: { provider: string; authSource: string } };
+    };
+
+    assert.equal(parsed.models.default.provider, "openai-codex");
+    assert.equal(parsed.models.default.authSource, "pi-auth");
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

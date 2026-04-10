@@ -12,36 +12,50 @@ export function buildHelpPayload(): HelpPayload {
     overview:
       "Harness is a long-running coding runtime focused on artifact-led state, verification, recovery, and provider-aware operation.",
     quickStart: [
-      "Initialize config: /config-init or /config-init-openai-codex",
-      "Check provider readiness: /provider-check or /provider-doctor",
-      "Start work: /plan <goal> or /longrun <goal>",
-      "Drive progress: /continue, /status, /review, /handoff, /reset"
+      "Initialize config: harness config init or harness config init openai-codex",
+      "Check provider readiness: harness provider check or harness provider doctor",
+      "Start work: harness plan <goal> or harness longrun <goal>",
+      "Drive progress: harness continue, harness status, harness review, harness handoff, harness reset"
     ],
     commandGroups: [
       {
         title: "Core Flow",
-        commands: ["/status", "/plan", "/longrun", "/continue", "/loop", "/execute", "/verify", "/review"]
+        commands: [
+          "harness status [--json]",
+          "harness plan [--json] <goal>",
+          "harness longrun [--json] <goal>",
+          "harness continue [--json]",
+          "harness loop [--json] [maxSteps]",
+          "harness execute [--json]",
+          "harness verify [--json]",
+          "harness review [--json]"
+        ]
       },
       {
         title: "Task State",
-        commands: ["/advance", "/task-done", "/block", "/unblock", "/resume", "/reset", "/handoff"]
+        commands: [
+          "harness advance [--json]",
+          "harness block [--json] <reason>",
+          "harness unblock [--json]",
+          "harness resume [--json]",
+          "harness reset [--json]",
+          "harness handoff [--json]"
+        ]
       },
       {
         title: "Provider",
-        commands: ["/config-init", "/config-init-openai-codex", "/config-show", "/provider-check", "/provider-smoke", "/provider-doctor"]
+        commands: [
+          "harness config init",
+          "harness config init openai-codex",
+          "harness config show",
+          "harness provider check [--json]",
+          "harness provider smoke [--json] [role]",
+          "harness provider doctor [--json]"
+        ]
       },
       {
-        title: "Automation",
-        commands: [
-          "/status-json",
-          "/plan-json",
-          "/longrun-json",
-          "/continue-json",
-          "/loop-json",
-          "/provider-check-json",
-          "/provider-smoke-json",
-          "/provider-doctor-json"
-        ]
+        title: "Compatibility",
+        commands: ["/status", "/plan", "/longrun", "/continue", "/provider-check", "/provider-smoke", "/provider-doctor"]
       }
     ]
   };

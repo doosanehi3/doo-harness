@@ -70,7 +70,7 @@ pnpm install
 Run the CLI directly from the repo:
 
 ```bash
-pnpm run start -- /help
+pnpm run start -- help
 ```
 
 Core verification commands:
@@ -91,41 +91,56 @@ HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /status
 HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /longrun "Describe the task here"
 ```
 
+You can also pass the target repo explicitly on the CLI:
+
+```bash
+pnpm run start -- --cwd /path/to/project status
+pnpm run start -- --cwd /path/to/project provider doctor
+```
+
+If you want a more conventional CLI shape, use product-style subcommands:
+
+```bash
+pnpm run start -- status --json
+pnpm run start -- longrun --json "Describe the task here"
+pnpm run start -- provider smoke --json
+```
+
 ## Quick Start
 
 Initialize a project-local harness config in the target working directory:
 
 ```bash
-HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /config-init
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- config init
 ```
 
 For ChatGPT subscription auth through Codex:
 
 ```bash
-HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /config-init-openai-codex
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- config init openai-codex
 ```
 
 Verify provider readiness and send a tiny live smoke request:
 
 ```bash
-HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /provider-check
-HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /provider-smoke
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- provider check
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- provider smoke
 ```
 
 Start a long-running task:
 
 ```bash
-HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /longrun "Describe the task here"
-HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /continue
-HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /status
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- longrun "Describe the task here"
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- continue
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- status
 ```
 
 If you want machine-readable automation surfaces instead of text output:
 
 ```bash
-HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /status-json
-HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /provider-doctor-json
-HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /loop-json 10
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- status --json
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- provider doctor --json
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- loop --json 10
 ```
 
 ## ChatGPT Subscription Setup
@@ -136,15 +151,15 @@ That path reads `~/.pi/agent/auth.json` by default and reuses the same OAuth cre
 Bootstrap the Codex profile:
 
 ```bash
-HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /config-init-openai-codex
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- config init openai-codex
 ```
 
 Check readiness and send live smoke requests:
 
 ```bash
-HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /provider-check
-HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /provider-smoke
-HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /provider-doctor
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- provider check
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- provider smoke
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- provider doctor
 ```
 
 `/provider-check` reports credential readiness.  
@@ -155,56 +170,37 @@ HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /provider-doctor
 
 Primary commands:
 
-- `/status`
-- `/help`
-- `/help-json`
-- `/status-json`
-- `/plan <goal>`
-- `/plan-json <goal>`
-- `/longrun <goal>`
-- `/longrun-json <goal>`
-- `/continue`
-- `/continue-json`
-- `/loop [maxSteps]`
-- `/loop-json [maxSteps]`
-- `/execute`
-- `/execute-json`
-- `/verify`
-- `/verify-json`
-- `/review-json`
-- `/review`
-- `/advance`
-- `/advance-json`
-- `/handoff`
-- `/handoff-json`
-- `/reset`
-- `/reset-json`
-- `/resume`
-- `/resume-json`
-- `/block <reason>`
-- `/block-json <reason>`
-- `/unblock`
-- `/unblock-json`
-- `/artifacts`
-- `/artifacts-json`
-- `/provider-check`
-- `/provider-check-json`
-- `/provider-doctor`
-- `/provider-doctor-json`
-- `/provider-smoke`
-- `/provider-smoke-json`
-- `/config-show`
-- `/config-init`
-- `/config-init --force`
-- `/config-init-openai-codex`
+- `help`
+- `status [--json]`
+- `plan [--json] <goal>`
+- `longrun [--json] <goal>`
+- `continue [--json]`
+- `loop [--json] [maxSteps]`
+- `execute [--json]`
+- `verify [--json]`
+- `review [--json]`
+- `advance [--json]`
+- `handoff [--json]`
+- `reset [--json]`
+- `resume [--json]`
+- `block [--json] <reason>`
+- `unblock [--json]`
+- `artifacts [--json]`
+- `provider check [--json]`
+- `provider doctor [--json]`
+- `provider smoke [--json] [role]`
+- `config show`
+- `config init`
+- `config init --force`
+- `config init openai-codex`
 
 ## Typical Workflow
 
 1. Initialize config in the target repo.
-2. Run `/provider-check` or `/provider-doctor`.
-3. Start work with `/plan` or `/longrun`.
-4. Drive execution with `/continue`, `/status`, `/review`, `/handoff`, and `/reset` as needed.
-5. Use `/provider-smoke` if you need to confirm the active model/provider path before bigger work.
+2. Run `provider check` or `provider doctor`.
+3. Start work with `plan` or `longrun`.
+4. Drive execution with `continue`, `status`, `review`, `handoff`, and `reset` as needed.
+5. Use `provider smoke` if you need to confirm the active model/provider path before bigger work.
 
 ## Current Limitations
 
