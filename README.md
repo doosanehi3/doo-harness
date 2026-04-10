@@ -1,19 +1,12 @@
 # Harness
 
-Long-running agent coding harness focused on workflow discipline, artifact-driven state, handoff/reset, and independent verification.
+Long-running coding harness for real development work.
 
-## Workspace
+It is built around workflow discipline, artifact-driven state, handoff/reset, and independent verification rather than single-shot code generation.
 
-- `packages/ai` - model and streaming abstractions
-- `packages/agent-core` - agent loop and tool execution primitives
-- `packages/harness-runtime` - flow routing, phase machine, artifacts, handoff, verification
-- `packages/cli` - command surface and REPL entrypoint
-- `packages/tui` - operational runtime panel
-- `packages/extensions` - workflow overlays
+## What It Is
 
-## Status
-
-This repository is no longer just a scaffold. The current implementation supports:
+The current implementation supports:
 
 - flow routing for `trivial`, `standard`, `risky`, and `long_running` work
 - artifact-driven `spec`, `plan`, `milestones`, `review`, `verification`, and `handoff`
@@ -25,6 +18,33 @@ This repository is no longer just a scaffold. The current implementation support
 - role-based model selection via `.harness/config.json`
 - OpenAI-compatible provider path with chat-completions and responses-style payload support
 - request option forwarding for provider-backed models (`temperature`, `maxTokens`)
+
+## Relation To pi
+
+This project is not a thin extension on top of `pi-coding-agent`.
+
+It started as an independent runtime because the main goal was to make long-running workflow primitives first-class:
+
+- artifact-driven state
+- explicit task and milestone ledgers
+- handoff and reset
+- verification gates
+- dependency-aware continuation
+
+Over time it selectively reused pieces of the `pi` stack where that made the system more practical:
+
+- `pi-auth` credential storage (`~/.pi/agent/auth.json`)
+- `pi-ai` transport for `openai-codex`
+- ChatGPT subscription auth through the same Codex OAuth credentials used by `pi-coding-agent`
+
+The current shape is therefore:
+
+- independent workflow/runtime core
+- selective reuse of `pi` auth and provider transport layers
+
+Long term, the likely product direction is to keep the long-running runtime
+local while moving more substrate concerns onto `pi-coding-agent`.
+See [docs/architecture/pi-integration.md](docs/architecture/pi-integration.md).
 
 ## Install
 
@@ -44,6 +64,17 @@ Core verification commands:
 ```bash
 pnpm run check
 pnpm run test
+```
+
+## Use With Another Repo
+
+The harness repository is the control plane. A target repo is passed through `HARNESS_CWD_OVERRIDE`.
+
+Example:
+
+```bash
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /status
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /longrun "Describe the task here"
 ```
 
 ## Quick Start
@@ -82,6 +113,29 @@ HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /status-json
 HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /provider-doctor-json
 HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /loop-json 10
 ```
+
+## ChatGPT Subscription Setup
+
+The harness supports ChatGPT subscription auth through `provider: "openai-codex"` with `authSource: "pi-auth"`.
+That path reads `~/.pi/agent/auth.json` by default and reuses the same OAuth credential store as `pi-coding-agent`.
+
+Bootstrap the Codex profile:
+
+```bash
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /config-init-openai-codex
+```
+
+Check readiness and send live smoke requests:
+
+```bash
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /provider-check
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /provider-smoke
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /provider-doctor
+```
+
+`/provider-check` reports credential readiness.  
+`/provider-smoke` sends one tiny live request.  
+`/provider-doctor` runs readiness + role-by-role smoke in one command.
 
 ## Commands
 
@@ -127,6 +181,20 @@ Primary commands:
 - `/config-init`
 - `/config-init --force`
 - `/config-init-openai-codex`
+
+## Typical Workflow
+
+1. Initialize config in the target repo.
+2. Run `/provider-check` or `/provider-doctor`.
+3. Start work with `/plan` or `/longrun`.
+4. Drive execution with `/continue`, `/status`, `/review`, `/handoff`, and `/reset` as needed.
+5. Use `/provider-smoke` if you need to confirm the active model/provider path before bigger work.
+
+## Current Limitations
+
+- Blank-repo bootstrap is present, but full end-to-end implementation from an empty repository is not yet as reliable as work inside an existing codebase.
+- `openai-codex` currently uses a subprocess bridge into local `pi-ai` code, so it depends on a local `pi-mono` checkout with installed dependencies.
+- Provider smoke and doctor commands validate readiness and a tiny live prompt, but they are not substitutes for full task-level verification.
 
 ## Runtime State
 
@@ -225,10 +293,7 @@ When `apiKeyEnvVar` is omitted, the harness infers a default env var for common 
 - `cerebras` -> `CEREBRAS_API_KEY`
 - `mistral` -> `MISTRAL_API_KEY`
 
-The harness also supports ChatGPT subscription auth through `provider: "openai-codex"` with `authSource: "pi-auth"`.
-That path reads `~/.pi/agent/auth.json` by default and reuses the same OAuth credential store as `pi-coding-agent`.
-
-You can bootstrap that profile directly with:
+You can bootstrap the `openai-codex` profile directly with:
 
 ```bash
 pnpm run dev -- /config-init-openai-codex
@@ -253,13 +318,6 @@ This writes a role-aware config roughly like:
 }
 ```
 
-To inspect whether the runtime can actually authenticate for each role, use:
-
-```bash
-pnpm run dev -- /provider-check
-pnpm run dev -- /provider-check-json
-```
-
 The readiness surface reports:
 
 - role
@@ -271,13 +329,6 @@ The readiness surface reports:
 - auth header details
 - base URL and API path
 - execution mode
-
-To send a tiny live request with the currently configured provider/model:
-
-```bash
-pnpm run dev -- /provider-smoke
-pnpm run dev -- /provider-smoke-json
-```
 
 Smoke and doctor surfaces include provider/model, stop reason, response text, and request duration in milliseconds.
 
@@ -312,6 +363,15 @@ This lets you choose execution isolation independently per role:
 - planner
 - worker
 - validator
+
+## Workspace Layout
+
+- `packages/ai` - model and streaming abstractions
+- `packages/agent-core` - agent loop and tool execution primitives
+- `packages/harness-runtime` - flow routing, phase machine, artifacts, handoff, verification
+- `packages/cli` - command surface and REPL entrypoint
+- `packages/tui` - operational runtime panel
+- `packages/extensions` - workflow overlays
 
 ## Automation Notes
 
