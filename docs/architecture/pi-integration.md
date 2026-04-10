@@ -57,6 +57,34 @@ This is why the current implementation already selectively reuses pi pieces:
 - ChatGPT subscription authentication via the same Codex OAuth credentials used
   by `pi-coding-agent`
 
+## What pi-coding-agent Already Does Well
+
+`pi-coding-agent` is already strong at the substrate layer:
+
+- session machinery
+- model registry
+- auth storage
+- provider transport
+- interactive UX
+- tool substrate
+- extension and prompt surfaces
+
+Those are real harness-engineering concerns, but they belong more to the
+product substrate than to the long-running runtime layer.
+
+## What Still Needs A Separate Runtime Layer
+
+What `pi-coding-agent` does not fully make first-class on its own is the
+long-running runtime layer:
+
+- artifact-first state as the main source of truth
+- explicit task and milestone ledgers
+- handoff and reset as normal operating primitives
+- verification as a runtime gate rather than a convention
+- dependency-aware continuation and recovery semantics
+
+That is the gap a thicker overlay or dedicated runtime layer must fill.
+
 ## Long-Term Direction
 
 Long term, the likely shape is:
