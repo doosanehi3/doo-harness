@@ -27,6 +27,16 @@ Using `pi-coding-agent` directly as the base would have made those concerns
 start life as overlays. Building an independent runtime kept those primitives
 under direct local control while they were still being invented.
 
+This distinction is important in light of the external harness-engineering
+references:
+
+- Anthropic's long-running harness writeup emphasizes coherence loss, reset,
+  and structured handoff over simply extending a single conversation
+- OpenAI's harness-engineering writeup emphasizes that the execution loop,
+  validation loop, and repository/environment legibility become the real system
+
+Those lessons point toward runtime ownership, not just stronger workflow modes.
+
 ## What Changed
 
 As the harness matured, some layers turned out not to be differentiators:
@@ -90,3 +100,31 @@ When deciding whether a capability belongs in the harness or in pi:
   artifact-driven progress, keep it in the harness
 - if it is primarily about auth, provider transport, model/session product UX,
   or generic coding-agent substrate, prefer pi reuse
+
+## Runtime vs Workflow
+
+This distinction matters:
+
+- a workflow mode such as `ralph` is a persistence and execution policy
+- the runtime is the stateful engine that knows the current phase, task,
+  milestone, blocker, handoff point, verification state, and tool policy
+
+In other words:
+
+- workflow answers: "how aggressively should the system keep going?"
+- runtime answers: "what state is the work in, what is allowed next, and how do
+  we recover if the current step fails?"
+
+This is why simply placing a stronger workflow mode on top of a session shell is
+not enough. Long-running development work still needs a runtime that owns:
+
+- task and milestone state
+- artifact persistence
+- verification gates
+- reset and resume semantics
+- tool access policy
+
+The long-term integration goal is therefore:
+
+- let `pi-coding-agent` provide more of the substrate
+- keep long-running runtime ownership local to the harness
