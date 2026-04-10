@@ -19,6 +19,14 @@ The current implementation supports:
 - OpenAI-compatible provider path with chat-completions and responses-style payload support
 - request option forwarding for provider-backed models (`temperature`, `maxTokens`)
 
+This project is more than a collection of workflow commands. It is intended to
+own runtime semantics for long-running work:
+
+- artifact-led state
+- verification and recovery
+- task and milestone control
+- tool access policy
+
 ## Relation To pi
 
 This project is not a thin extension on top of `pi-coding-agent`.
