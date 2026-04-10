@@ -1358,6 +1358,47 @@ export class HarnessRuntime {
   } {
     const cliName = this.inferNodeCliNameFromGoal(input);
     const supportedCommands = this.inferSupportedCliCommands(input);
+    const lowerInput = input.toLowerCase();
+
+    if (
+      longRunning &&
+      (lowerInput.includes("catalog webapp") ||
+        lowerInput.includes("catalogue webapp") ||
+        (lowerInput.includes("webapp") && lowerInput.includes("catalog")))
+    ) {
+      return {
+        specContent: `# Spec
+
+Goal: ${input}
+
+## Functional Requirements
+- Render a branded landing page and promotional hero.
+- Render a product catalog listing with category, tag, and season filters.
+- Support URL-backed filter state.
+- Render product detail pages with related products and inquiry CTA.
+- Use mock product data and a responsive layout.
+- Include tests and a README.
+
+## Constraints
+- Start with a dependency-free runnable baseline.
+- Exclude cart, checkout, login, admin, and CMS for v1.
+
+## Success Criteria
+- The catalog routes, filter interactions, and CTA flow are demonstrable.
+- \`pnpm run test\` passes.
+- The README explains setup and demo flow.`,
+        planContent: `# Plan
+
+- [ ] Define the catalog IA, routes, and interaction contract | milestone=M1 | kind=analysis | owner=planner | expectedOutput=catalog interaction contract note | verify=manual:review catalog contract
+- [ ] Implement the catalog shell, filters, detail view, and CTA flow | milestone=M2 | kind=implementation | owner=worker | expectedOutput=working catalog shell, filters, detail view, and CTA | dependsOn=T1 | verify=pnpm run test
+- [ ] Verify the catalog interactions independently | milestone=M3 | kind=verification | owner=validator | expectedOutput=verification evidence | dependsOn=T2 | verify=pnpm run test`,
+        milestoneContent: `# Milestones
+
+- M1: Define catalog interaction contract | kind=planning
+- M2: Implement catalog shell and interactions | kind=implementation | dependsOn=M1
+- M3: Verify catalog behavior and handoff | kind=verification | dependsOn=M2`
+      };
+    }
 
     if (longRunning && cliName) {
       const storageFile = `${cliName}.tasks.json`;

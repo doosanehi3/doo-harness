@@ -323,6 +323,35 @@ test("node cli longrun planning writes a concrete spec and plan for blank-repo g
   }
 });
 
+test("catalog webapp longrun planning writes a concrete spec and plan for blank-repo goals", async () => {
+  const cwd = await createTempHarnessDir();
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan(
+      "Build an interactive clothing product promotional catalog webapp with a branded landing page, catalog listing, category/tag/season filters, product detail pages, related products, inquiry/interest CTA, URL-backed filter state, responsive layout, mock data, tests, and a README. Exclude cart, checkout, login, admin, and CMS.",
+      true
+    );
+
+    const specBody = await readFile(join(cwd, ".harness", "artifacts", "spec.md"), "utf8");
+    const planBody = await readFile(join(cwd, ".harness", "artifacts", "plan.md"), "utf8");
+    const status = runtime.getStatus();
+    const taskState = runtime.getTaskStateSnapshot();
+
+    assert.match(specBody, /catalog webapp/i);
+    assert.match(specBody, /category, tag, and season filters/i);
+    assert.match(specBody, /product detail pages/i);
+    assert.match(planBody, /Define the catalog IA, routes, and interaction contract/);
+    assert.match(planBody, /Implement the catalog shell, filters, detail view, and CTA flow/);
+    assert.match(planBody, /Verify the catalog interactions independently/);
+    assert.equal(status.activeTaskText, "Define the catalog IA, routes, and interaction contract");
+    assert.equal(taskState.taskExpectedOutputs.T1, "catalog interaction contract note");
+    assert.equal(taskState.taskExpectedOutputs.T2, "working catalog shell, filters, detail view, and CTA");
+    assert.deepEqual(taskState.taskVerificationCommands.T2, ["pnpm run test"]);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("blockCurrentTask pauses the runtime and records blocker", async () => {
   const cwd = await createTempHarnessDir();
   try {
