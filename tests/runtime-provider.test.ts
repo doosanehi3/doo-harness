@@ -271,7 +271,18 @@ test("blank node cli repos get a minimal bootstrap before implementation agent r
     assert.match(note, /README\.md/);
     assert.match(note, /src\/sample-tool\.js/);
     assert.match(note, /tests\/sample-tool\.test\.js/);
+    const readmeBody = await readFile(join(cwd, "README.md"), "utf8");
+    const sourceBody = await readFile(join(cwd, "src", "sample-tool.js"), "utf8");
+    const testBody = await readFile(join(cwd, "tests", "sample-tool.test.js"), "utf8");
+
     assert.equal(await readFile(join(cwd, "package.json"), "utf8").then(body => body.includes("\"sample-tool\"")), true);
+    assert.match(readmeBody, /sample-tool/);
+    assert.match(readmeBody, /sample-tool\.tasks\.json/);
+    assert.match(sourceBody, /sample-tool\.tasks\.json/);
+    assert.match(sourceBody, /case "add"/);
+    assert.match(sourceBody, /case "list"/);
+    assert.match(testBody, /Implement add command/);
+    assert.match(testBody, /Implement list command/);
   } finally {
     server.close();
     await rm(cwd, { recursive: true, force: true });
