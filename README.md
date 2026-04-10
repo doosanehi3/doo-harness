@@ -1,0 +1,337 @@
+# Harness
+
+Long-running agent coding harness focused on workflow discipline, artifact-driven state, handoff/reset, and independent verification.
+
+## Workspace
+
+- `packages/ai` - model and streaming abstractions
+- `packages/agent-core` - agent loop and tool execution primitives
+- `packages/harness-runtime` - flow routing, phase machine, artifacts, handoff, verification
+- `packages/cli` - command surface and REPL entrypoint
+- `packages/tui` - operational runtime panel
+- `packages/extensions` - workflow overlays
+
+## Status
+
+This repository is no longer just a scaffold. The current implementation supports:
+
+- flow routing for `trivial`, `standard`, `risky`, and `long_running` work
+- artifact-driven `spec`, `plan`, `milestones`, `review`, `verification`, and `handoff`
+- task and milestone ledgers with dependency-aware progression
+- `continue` and `loop` orchestration for long-running work
+- role-aware task execution (`planner`, `worker`, `validator`)
+- phase-aware and task-aware tool policy
+- machine-readable status and artifact surfaces
+- role-based model selection via `.harness/config.json`
+- OpenAI-compatible provider path with chat-completions and responses-style payload support
+- request option forwarding for provider-backed models (`temperature`, `maxTokens`)
+
+## Install
+
+Requirements:
+
+- Node.js 20+
+- `pnpm`
+
+Install dependencies from the repo root:
+
+```bash
+pnpm install
+```
+
+Core verification commands:
+
+```bash
+pnpm run check
+pnpm run test
+```
+
+## Quick Start
+
+Initialize a project-local harness config in the target working directory:
+
+```bash
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /config-init
+```
+
+For ChatGPT subscription auth through Codex:
+
+```bash
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /config-init-openai-codex
+```
+
+Verify provider readiness and send a tiny live smoke request:
+
+```bash
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /provider-check
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /provider-smoke
+```
+
+Start a long-running task:
+
+```bash
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /longrun "Describe the task here"
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /continue
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /status
+```
+
+If you want machine-readable automation surfaces instead of text output:
+
+```bash
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /status-json
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /provider-doctor-json
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run dev -- /loop-json 10
+```
+
+## Commands
+
+Primary commands:
+
+- `/status`
+- `/status-json`
+- `/plan <goal>`
+- `/plan-json <goal>`
+- `/longrun <goal>`
+- `/longrun-json <goal>`
+- `/continue`
+- `/continue-json`
+- `/loop [maxSteps]`
+- `/loop-json [maxSteps]`
+- `/execute`
+- `/execute-json`
+- `/verify`
+- `/verify-json`
+- `/review-json`
+- `/review`
+- `/advance`
+- `/advance-json`
+- `/handoff`
+- `/handoff-json`
+- `/reset`
+- `/reset-json`
+- `/resume`
+- `/resume-json`
+- `/block <reason>`
+- `/block-json <reason>`
+- `/unblock`
+- `/unblock-json`
+- `/artifacts`
+- `/artifacts-json`
+- `/provider-check`
+- `/provider-check-json`
+- `/provider-doctor`
+- `/provider-doctor-json`
+- `/provider-smoke`
+- `/provider-smoke-json`
+- `/config-show`
+- `/config-init`
+- `/config-init --force`
+- `/config-init-openai-codex`
+
+## Runtime State
+
+The runtime persists state under `.harness/`:
+
+- `.harness/state/run-state.json`
+- `.harness/artifacts/task-state.json`
+- `.harness/artifacts/spec.md`
+- `.harness/artifacts/plan.md`
+- `.harness/artifacts/milestones.md`
+- `.harness/artifacts/reviews/`
+- `.harness/artifacts/verifications/`
+- `.harness/artifacts/handoffs/`
+- `.harness/artifacts/notes/`
+
+The operator panel currently exposes:
+
+- current phase and flow
+- goal, spec path, and plan path
+- active and next milestone plus milestone text/status
+- milestone/task progress and per-status counts
+- active task text, status, kind, owner, expected output, output path
+- selected model id and execution mode
+- auth source and credential readiness via `/provider-check`
+- verification status and verification path
+- verification command(s)
+- blocker
+- ready tasks and pending dependencies
+- allowed tools
+- next recommended action
+
+## Model Config
+
+Role-based model selection is configured in `.harness/config.json`.
+
+The config may use either shorthand strings:
+
+```json
+{
+  "models": {
+    "default": "stub",
+    "planner": "stub-planner",
+    "worker": "stub-worker",
+    "validator": "stub-validator"
+  }
+}
+```
+
+or full objects:
+
+```json
+{
+  "models": {
+    "default": {
+      "id": "custom-default",
+      "provider": "openai",
+      "name": "Custom Default",
+      "reasoning": true
+    }
+  }
+}
+```
+
+OpenAI-compatible endpoints can be configured with transport details in the model object:
+
+```json
+{
+  "models": {
+    "default": {
+      "id": "gpt-4.1-mini",
+      "provider": "openai-compatible",
+      "name": "gpt-4.1-mini",
+      "temperature": 0.2,
+      "maxTokens": 2000,
+      "baseUrl": "https://api.openai.com",
+      "apiPath": "/v1/chat/completions",
+      "apiKeyEnvVar": "OPENAI_API_KEY"
+    }
+  }
+}
+```
+
+Supported OpenAI-compatible response styles:
+
+- chat-completions text responses
+- chat-completions `tool_calls`
+- responses-style `output_text`
+- responses-style `function_call`
+
+When `apiKeyEnvVar` is omitted, the harness infers a default env var for common providers:
+
+- `openai` / `openai-compatible` -> `OPENAI_API_KEY`
+- `openrouter` -> `OPENROUTER_API_KEY`
+- `groq` -> `GROQ_API_KEY`
+- `xai` -> `XAI_API_KEY`
+- `cerebras` -> `CEREBRAS_API_KEY`
+- `mistral` -> `MISTRAL_API_KEY`
+
+The harness also supports ChatGPT subscription auth through `provider: "openai-codex"` with `authSource: "pi-auth"`.
+That path reads `~/.pi/agent/auth.json` by default and reuses the same OAuth credential store as `pi-coding-agent`.
+
+You can bootstrap that profile directly with:
+
+```bash
+pnpm run dev -- /config-init-openai-codex
+```
+
+or via the generic config initializer:
+
+```bash
+pnpm run dev -- /config-init --profile openai-codex --force
+```
+
+This writes a role-aware config roughly like:
+
+```json
+{
+  "models": {
+    "default": { "id": "gpt-5.3-codex", "provider": "openai-codex", "authSource": "pi-auth" },
+    "planner": { "id": "gpt-5.3-codex", "provider": "openai-codex", "authSource": "pi-auth" },
+    "worker": { "id": "gpt-5.3-codex", "provider": "openai-codex", "authSource": "pi-auth" },
+    "validator": { "id": "gpt-5.3-codex-spark", "provider": "openai-codex", "authSource": "pi-auth" }
+  }
+}
+```
+
+To inspect whether the runtime can actually authenticate for each role, use:
+
+```bash
+pnpm run dev -- /provider-check
+pnpm run dev -- /provider-check-json
+```
+
+The readiness surface reports:
+
+- role
+- provider and model id
+- auth source (`env` or `pi-auth`)
+- credential location (`OPENAI_API_KEY` or `~/.pi/agent/auth.json`)
+- whether a usable credential is present
+- readiness status and suggested next step
+- auth header details
+- base URL and API path
+- execution mode
+
+To send a tiny live request with the currently configured provider/model:
+
+```bash
+pnpm run dev -- /provider-smoke
+pnpm run dev -- /provider-smoke-json
+```
+
+Smoke and doctor surfaces include provider/model, stop reason, response text, and request duration in milliseconds.
+
+Resolved config shown by `/config-show` normalizes model entries into full objects, so the output is richer than the shorthand input form.
+
+Use `/config-init` to create a default config file and `/config-show` to inspect the resolved config.
+
+Execution mode can also be configured:
+
+```json
+{
+  "execution": {
+    "workerMode": "agent"
+  }
+}
+```
+
+Supported values:
+
+- `"agent"`: implementation tasks use the in-process agent/tool loop
+- `"fresh"`: implementation tasks can use the fresh-context worker executor
+- `"subprocess"`: implementation tasks can use the subprocess worker executor skeleton
+
+`plannerMode` and `validatorMode` can also be set to:
+
+- `"agent"`
+- `"fresh"`
+- `"subprocess"`
+
+This lets you choose execution isolation independently per role:
+
+- planner
+- worker
+- validator
+
+## Automation Notes
+
+The CLI now exposes machine-readable surfaces intended for automation:
+
+- `/status-json`
+- `/plan-json <goal>`
+- `/longrun-json <goal>`
+- `/artifacts-json`
+- `/verify-json`
+- `/loop-json [maxSteps]`
+- `/execute-json`
+- `/continue-json`
+- `/advance-json`
+- `/block-json <reason>`
+- `/unblock-json`
+- `/resume-json`
+- `/reset-json`
+- `/review-json`
+- `/handoff-json`
+- `/config-show`
+
+When embedding the CLI from another process, you can set `HARNESS_CWD_OVERRIDE` to point the runtime at a different workspace while still executing the CLI from the harness repo root.

@@ -1,0 +1,20 @@
+export const COMMANDS = [
+  "auto",
+  "direct",
+  "clarify",
+  "plan",
+  "execute",
+  "task-done",
+  "block",
+  "unblock",
+  "continue",
+  "verify",
+  "review",
+  "longrun",
+  "resume",
+  "advance",
+  "status",
+  "artifacts",
+  "handoff",
+  "reset"
+] as const;

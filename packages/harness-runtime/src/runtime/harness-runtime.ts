@@ -1,0 +1,2039 @@
+import { join, relative } from "node:path";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { Agent, createBashTool, createDefaultCodingTools } from "@doo/harness-agent-core";
+import { complete, createModel, getModelAuthReadiness, type Message, type Model } from "@doo/harness-ai";
+import type { ArtifactMeta } from "../artifacts/types.js";
+import { FileArtifactStore } from "../artifacts/file-artifact-store.js";
+import { InProcessFreshExecutor } from "../execution/fresh-context-executor.js";
+import { SubprocessFreshExecutor } from "../execution/subprocess-executor.js";
+import type { ExecutionRole } from "../execution/types.js";
+import { loadRuntimeConfig, type ResolvedRuntimeConfig } from "../config/runtime-config.js";
+import { transitionPhase } from "../phases/phase-machine.js";
+import type { Phase, RunState } from "../phases/types.js";
+import { routeFlow } from "../router/route-flow.js";
+import { parseCommand } from "../router/parse-command.js";
+import { createInitialTaskState, loadTaskState, saveTaskState, type TaskState } from "../state/task-state.js";
+import { loadRunState, saveRunState } from "../state/run-state.js";
+import { createHandoff } from "../handoff/handoff-builder.js";
+import { buildExecutionPrompt, buildVerificationPrompt } from "../context/task-context.js";
+import { parseMilestones } from "../context/milestone-tasks.js";
+import { parsePlanTasks } from "../context/plan-tasks.js";
+import { validateBashCommandForPhase } from "../policy/bash-policy.js";
+import { canComplete } from "../verification/verification-gates.js";
+import { writeVerificationResult } from "../verification/verifier.js";
+import type { RecoveryHint, VerificationResult } from "../verification/types.js";
+import { getAllowedToolNamesForPhase } from "../policy/tool-policy.js";
+import type { HarnessSession } from "./harness-session.js";
+
+export function createInitialRunState(): RunState {
+  return {
+    phase: "idle",
+    currentFlow: "auto",
+    goalSummary: null,
+    activeSpecPath: null,
+    activePlanPath: null,
+    activeMilestoneId: null,
+    activeTaskId: null,
+    lastVerificationStatus: null,
+    lastVerificationPath: null,
+    lastReviewPath: null,
+    lastHandoffPath: null,
+    pendingQuestions: [],
+    blocker: null,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+export function createHarnessSession(sessionId: string, cwd: string): HarnessSession {
+  return {
+    sessionId,
+    branchId: "main",
+    cwd,
+    state: createInitialRunState(),
+    taskState: createInitialTaskState()
+  };
+}
+
+export interface RuntimeStatus {
+  phase: string;
+  flow: string;
+  goalSummary: string | null;
+  activeSpecPath: string | null;
+  activePlanPath: string | null;
+  activeMilestoneId: string | null;
+  activeMilestoneText: string | null;
+  activeMilestoneStatus: string | null;
+  nextMilestoneId: string | null;
+  nextMilestoneText: string | null;
+  milestoneProgress: string;
+  milestoneStatusCounts: string;
+  taskProgress: string;
+  taskStatusCounts: string;
+  activeTaskId: string | null;
+  activeTaskText: string | null;
+  activeTaskStatus: string | null;
+  activeTaskKind: string | null;
+  activeTaskOwner: string | null;
+  activeTaskExpectedOutput: string | null;
+  activeTaskOutputPath: string | null;
+  activeProvider: string;
+  activeModelId: string;
+  activeModelTemperature: number | null;
+  activeModelMaxTokens: number | null;
+  activeExecutionMode: string;
+  activeTaskVerifyCommand: string[] | null;
+  activeTaskRecoveryHint: RecoveryHint | null;
+  lastVerificationStatus: string | null;
+  lastVerificationPath: string | null;
+  lastReviewPath: string | null;
+  lastHandoffPath: string | null;
+  blocker: string | null;
+  resumePhase: string | null;
+  readyTasks: string[];
+  pendingDependencies: string[];
+  allowedTools: string[];
+  nextAction: string;
+}
+
+export interface CompletionLoopResult {
+  steps: string[];
+  stopReason: "completed" | "blocked" | "no_progress" | "max_steps";
+  finalPhase: string;
+  finalMilestoneId: string | null;
+  finalTaskId: string | null;
+  blocker: string | null;
+  completed: boolean;
+}
+
+export interface ProviderRoleReadiness {
+  role: "default" | "planner" | "worker" | "validator";
+  provider: string;
+  modelId: string;
+  authSource: "env" | "pi-auth";
+  envVar: string;
+  credentialLocation: string;
+  hasApiKey: boolean;
+  status: "ready" | "missing_credentials";
+  suggestedAction: string;
+  authHeaderName: string;
+  authPrefix: string | null;
+  baseUrl: string | null;
+  apiPath: string | null;
+  executionMode: "agent" | "fresh" | "subprocess";
+}
+
+export interface ProviderSmokeResult {
+  role: "default" | "planner" | "worker" | "validator";
+  provider: string;
+  modelId: string;
+  durationMs: number;
+  stopReason: string;
+  text: string;
+  errorMessage?: string;
+}
+
+export interface ProviderDoctorResult {
+  role: "default" | "planner" | "worker" | "validator";
+  readiness: ProviderRoleReadiness;
+  smoke?: ProviderSmokeResult;
+}
+
+export class HarnessRuntime {
+  private readonly artifactStore: FileArtifactStore;
+  private readonly freshExecutor = new InProcessFreshExecutor();
+  private readonly subprocessExecutor = new SubprocessFreshExecutor();
+  private readonly statePath: string;
+  private readonly taskStatePath: string;
+  private readonly config: ResolvedRuntimeConfig;
+  private session: HarnessSession;
+
+  private constructor(cwd: string, session: HarnessSession, config: ResolvedRuntimeConfig) {
+    this.session = session;
+    this.config = config;
+    this.statePath = join(cwd, ".harness", "state", "run-state.json");
+    this.taskStatePath = join(cwd, ".harness", "artifacts", "task-state.json");
+    this.artifactStore = new FileArtifactStore(join(cwd, ".harness", "artifacts"));
+  }
+
+  private static reconcileSession(session: HarnessSession): HarnessSession {
+    const activeTaskId = session.taskState.activeTaskId ?? session.state.activeTaskId;
+    const taskBoundMilestoneId = activeTaskId ? session.taskState.taskMilestones[activeTaskId] ?? null : null;
+    const activeMilestoneId =
+      taskBoundMilestoneId ??
+      session.taskState.activeMilestoneId ??
+      session.state.activeMilestoneId;
+    const activeTaskStatus = activeTaskId ? session.taskState.tasks[activeTaskId] ?? null : null;
+    session.state.activeTaskId = activeTaskId;
+    session.taskState.activeTaskId = activeTaskId;
+    session.state.activeMilestoneId = activeMilestoneId;
+    session.taskState.activeMilestoneId = activeMilestoneId;
+
+    const lastVerificationPath = session.state.lastVerificationPath ?? session.taskState.lastVerificationPath;
+    session.state.lastVerificationPath = lastVerificationPath;
+    session.taskState.lastVerificationPath = lastVerificationPath;
+
+    const lastVerificationStatus = session.state.lastVerificationStatus ?? session.taskState.lastVerificationStatus;
+    const inferredVerificationStatus =
+      lastVerificationStatus ??
+      (lastVerificationPath
+        ? activeTaskStatus === "blocked"
+          ? "fail"
+          : activeTaskStatus === "validated" || activeTaskStatus === "done"
+            ? "pass"
+            : null
+        : null);
+    session.state.lastVerificationStatus = inferredVerificationStatus;
+    session.taskState.lastVerificationStatus = inferredVerificationStatus;
+
+    const lastReviewPath = session.state.lastReviewPath ?? session.taskState.lastReviewPath;
+    session.state.lastReviewPath = lastReviewPath;
+    session.taskState.lastReviewPath = lastReviewPath;
+
+    const lastHandoffPath = session.state.lastHandoffPath ?? session.taskState.lastHandoffPath;
+    session.state.lastHandoffPath = lastHandoffPath;
+    session.taskState.lastHandoffPath = lastHandoffPath;
+
+    if (activeTaskStatus !== "blocked") {
+      session.state.blocker = null;
+      if (activeTaskId) {
+        delete session.taskState.taskBlockers[activeTaskId];
+        delete session.taskState.taskRecoveryHints[activeTaskId];
+      }
+      session.taskState.blockers = [];
+    } else if (session.state.blocker) {
+      session.taskState.blockers = Array.from(new Set([...session.taskState.blockers, session.state.blocker]));
+      if (activeTaskId && !session.taskState.taskBlockers[activeTaskId]) {
+        session.taskState.taskBlockers[activeTaskId] = session.state.blocker;
+      }
+    } else if (activeTaskId && session.taskState.taskBlockers[activeTaskId]) {
+      session.state.blocker = session.taskState.taskBlockers[activeTaskId];
+      session.taskState.blockers = Array.from(
+        new Set([...session.taskState.blockers, session.taskState.taskBlockers[activeTaskId]])
+      );
+    }
+
+    return session;
+  }
+
+  private static async hydrateSessionMetadata(cwd: string, session: HarnessSession): Promise<HarnessSession> {
+    if (session.state.activePlanPath) {
+      try {
+        const planContent = await readFile(session.state.activePlanPath, "utf8");
+        const parsedTasks = parsePlanTasks(planContent);
+        const parsedMilestoneIds = Object.keys(session.taskState.milestones).sort((a, b) =>
+          a.localeCompare(b, undefined, { numeric: true })
+        );
+        for (const [index, task] of parsedTasks.entries()) {
+          if (!session.taskState.taskTexts[task.id]) {
+            session.taskState.taskTexts[task.id] = task.text;
+          }
+          if (!session.taskState.taskMilestones[task.id]) {
+            if (task.milestoneId) {
+              session.taskState.taskMilestones[task.id] = task.milestoneId;
+            } else if (parsedMilestoneIds[index]) {
+              session.taskState.taskMilestones[task.id] = parsedMilestoneIds[index];
+            }
+          }
+          if (task.kind && !session.taskState.taskKinds[task.id]) {
+            session.taskState.taskKinds[task.id] = task.kind;
+          }
+          if (task.owner && !session.taskState.taskOwners[task.id]) {
+            session.taskState.taskOwners[task.id] = task.owner;
+          }
+          if (task.expectedOutput && !session.taskState.taskExpectedOutputs[task.id]) {
+            session.taskState.taskExpectedOutputs[task.id] = task.expectedOutput;
+          }
+          if (task.verifyCommands && !session.taskState.taskVerificationCommands[task.id]) {
+            session.taskState.taskVerificationCommands[task.id] = task.verifyCommands;
+          }
+          if (task.dependsOn && !session.taskState.taskDependencies[task.id]) {
+            session.taskState.taskDependencies[task.id] = task.dependsOn;
+          }
+        }
+      } catch {
+        // Keep existing persisted state when plan hydration is unavailable.
+      }
+    }
+
+    try {
+      const milestonesPath = join(cwd, ".harness", "artifacts", "milestones.md");
+      const milestonesContent = await readFile(milestonesPath, "utf8");
+      for (const milestone of parseMilestones(milestonesContent)) {
+        if (!session.taskState.milestoneTexts[milestone.id]) {
+          session.taskState.milestoneTexts[milestone.id] = milestone.text;
+        }
+        if (milestone.kind && !session.taskState.milestoneKinds[milestone.id]) {
+          session.taskState.milestoneKinds[milestone.id] = milestone.kind;
+        }
+        if (milestone.dependsOn && !session.taskState.milestoneDependencies[milestone.id]) {
+          session.taskState.milestoneDependencies[milestone.id] = milestone.dependsOn;
+        }
+      }
+    } catch {
+      // Keep existing persisted state when milestone hydration is unavailable.
+    }
+
+    return session;
+  }
+
+  private async captureWorkspaceFileSnapshot(root = this.session.cwd): Promise<Map<string, string>> {
+    const snapshot = new Map<string, string>();
+
+    const visit = async (dir: string): Promise<void> => {
+      const entries = await readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.name === ".harness" || entry.name === "node_modules" || entry.name === ".git") {
+          continue;
+        }
+        const absolutePath = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          await visit(absolutePath);
+          continue;
+        }
+        if (!entry.isFile()) {
+          continue;
+        }
+        const fileStat = await stat(absolutePath);
+        snapshot.set(relative(root, absolutePath), `${fileStat.size}:${fileStat.mtimeMs}`);
+      }
+    };
+
+    await visit(root);
+    return snapshot;
+  }
+
+  private diffWorkspaceSnapshots(before: Map<string, string>, after: Map<string, string>): string[] {
+    const changed = new Set<string>();
+
+    for (const [path, fingerprint] of before.entries()) {
+      if (!after.has(path) || after.get(path) !== fingerprint) {
+        changed.add(path);
+      }
+    }
+
+    for (const path of after.keys()) {
+      if (!before.has(path)) {
+        changed.add(path);
+      }
+    }
+
+    return [...changed].sort();
+  }
+
+  private inferNodeCliName(): string | null {
+    const goal = this.session.state.goalSummary ?? "";
+    const explicit = goal.match(/CLI called ([a-z0-9-]+)/i);
+    if (explicit?.[1]) {
+      return explicit[1].toLowerCase();
+    }
+    if (/node\.?js cli/i.test(goal)) {
+      return "app-cli";
+    }
+    return null;
+  }
+
+  private getBootstrapScaffoldFiles(): string[] {
+    const cliName = this.inferNodeCliName();
+    if (!cliName) {
+      return [];
+    }
+    return [
+      "package.json",
+      "README.md",
+      `src/${cliName}.js`,
+      `bin/${cliName}.js`,
+      `tests/${cliName}.test.js`
+    ];
+  }
+
+  private async bootstrapBlankNodeCliProjectIfNeeded(taskId: string, role: ExecutionRole | null): Promise<void> {
+    if (role !== "worker") {
+      return;
+    }
+    if ((this.session.taskState.taskKinds[taskId] ?? null) !== "implementation") {
+      return;
+    }
+
+    const cliName = this.inferNodeCliName();
+    if (!cliName) {
+      return;
+    }
+
+    try {
+      await readFile(join(this.session.cwd, "package.json"), "utf8");
+      return;
+    } catch {
+      // fall through
+    }
+
+    await mkdir(join(this.session.cwd, "src"), { recursive: true });
+    await mkdir(join(this.session.cwd, "bin"), { recursive: true });
+    await mkdir(join(this.session.cwd, "tests"), { recursive: true });
+
+    const packageJson = {
+      name: cliName,
+      version: "0.1.0",
+      private: true,
+      type: "module",
+      bin: {
+        [cliName]: `./bin/${cliName}.js`
+      },
+      scripts: {
+        test: "node --test tests/**/*.test.js"
+      }
+    };
+
+    await writeFile(join(this.session.cwd, "package.json"), JSON.stringify(packageJson, null, 2) + "\n", "utf8");
+    await writeFile(
+      join(this.session.cwd, "README.md"),
+      `# ${cliName}\n\nDependency-free Node.js CLI scaffold generated by harness bootstrap.\n`,
+      "utf8"
+    );
+    await writeFile(
+      join(this.session.cwd, "src", `${cliName}.js`),
+      `export function main() {\n  console.log("TODO: implement ${cliName}");\n}\n`,
+      "utf8"
+    );
+    await writeFile(
+      join(this.session.cwd, "bin", `${cliName}.js`),
+      `#!/usr/bin/env node\nimport { main } from "../src/${cliName}.js";\nmain();\n`,
+      "utf8"
+    );
+    await writeFile(
+      join(this.session.cwd, "tests", `${cliName}.test.js`),
+      `import test from "node:test";\nimport assert from "node:assert/strict";\n\ntest("${cliName} scaffold placeholder", () => {\n  assert.fail("Implement ${cliName} CLI behavior");\n});\n`,
+      "utf8"
+    );
+  }
+
+  static async create(cwd: string, sessionId = "session-1"): Promise<HarnessRuntime> {
+    const base = createHarnessSession(sessionId, cwd);
+    const config = await loadRuntimeConfig(cwd);
+    base.state = await loadRunState(join(cwd, ".harness", "state", "run-state.json"), base.state);
+    base.taskState = await loadTaskState(join(cwd, ".harness", "artifacts", "task-state.json"));
+    const reconciled = await HarnessRuntime.hydrateSessionMetadata(cwd, HarnessRuntime.reconcileSession(base));
+    await saveRunState(join(cwd, ".harness", "state", "run-state.json"), reconciled.state);
+    await saveTaskState(join(cwd, ".harness", "artifacts", "task-state.json"), reconciled.taskState as TaskState);
+    return new HarnessRuntime(cwd, reconciled, config);
+  }
+
+  getStatus(): RuntimeStatus {
+        const taskId = this.session.taskState.activeTaskId ?? this.session.state.activeTaskId;
+        const milestoneId = this.session.taskState.activeMilestoneId ?? this.session.state.activeMilestoneId;
+        const taskStatus = taskId ? this.session.taskState.tasks[taskId] ?? null : null;
+        const readyTasks = this.getReadyTaskDescriptors();
+        const pendingDependencies = this.getPendingDependencySummaries();
+        return {
+        phase: this.session.state.phase,
+          flow: this.session.state.currentFlow,
+          goalSummary: this.session.state.goalSummary,
+          activeSpecPath: this.session.state.activeSpecPath,
+          activePlanPath: this.session.state.activePlanPath,
+          activeMilestoneId: milestoneId,
+          activeMilestoneText: milestoneId ? this.session.taskState.milestoneTexts[milestoneId] ?? null : null,
+          activeMilestoneStatus: milestoneId ? this.session.taskState.milestones[milestoneId] ?? null : null,
+          nextMilestoneId: this.getNextMilestoneId(),
+          nextMilestoneText: this.getNextMilestoneId()
+            ? this.session.taskState.milestoneTexts[this.getNextMilestoneId()!] ?? null
+            : null,
+          milestoneProgress: this.getMilestoneProgress(),
+          milestoneStatusCounts: this.getMilestoneStatusCounts(),
+          taskProgress: this.getTaskProgress(),
+          taskStatusCounts: this.getTaskStatusCounts(),
+          activeTaskId: taskId,
+          activeTaskText: taskId
+            ? this.session.taskState.taskTexts[taskId] ?? null
+            : null,
+          activeTaskStatus: taskStatus,
+          activeTaskKind: taskId
+            ? this.session.taskState.taskKinds[taskId] ?? null
+            : null,
+          activeTaskOwner: taskId
+            ? this.session.taskState.taskOwners[taskId] ?? null
+            : null,
+          activeTaskExpectedOutput: taskId
+            ? this.session.taskState.taskExpectedOutputs[taskId] ?? null
+            : null,
+          activeTaskOutputPath: taskId
+            ? this.session.taskState.taskOutputs[taskId] ?? null
+            : null,
+          activeProvider: this.selectModelForTask(taskId).provider,
+          activeModelId: this.selectModelForTask(taskId).id,
+          activeModelTemperature: this.selectModelForTask(taskId).temperature ?? null,
+          activeModelMaxTokens: this.selectModelForTask(taskId).maxTokens ?? null,
+          activeExecutionMode: this.getExecutionModeForTask(taskId),
+          activeTaskVerifyCommand: taskId
+            ? this.session.taskState.taskVerificationCommands[taskId] ?? null
+            : null,
+          activeTaskRecoveryHint: taskId
+            ? this.session.taskState.taskRecoveryHints[taskId] ?? null
+            : null,
+          lastVerificationStatus: this.session.state.lastVerificationStatus,
+          lastVerificationPath: this.session.state.lastVerificationPath,
+            lastReviewPath: this.session.state.lastReviewPath,
+            lastHandoffPath: this.session.state.lastHandoffPath,
+            blocker: this.session.state.blocker,
+            resumePhase: this.session.taskState.resumePhase,
+            readyTasks,
+            pendingDependencies,
+            allowedTools: getAllowedToolNamesForPhase({
+              phase: this.session.state.phase,
+              flow: this.session.state.currentFlow,
+              activeTaskId: taskId,
+              activeTaskKind: taskId ? this.session.taskState.taskKinds[taskId] ?? null : null,
+              activeTaskStatus: taskId
+                ? this.session.taskState.tasks[taskId] ?? null
+                : null,
+              activeTaskBlocker: taskId
+                ? this.session.taskState.taskBlockers[taskId] ?? null
+                : null,
+              blocker: this.session.state.blocker
+              }),
+            nextAction: this.getSuggestedNextAction(taskStatus)
+            };
+          }
+
+  getTaskStateSnapshot(): TaskState {
+    return structuredClone(this.session.taskState);
+  }
+
+  getProviderReadiness(): ProviderRoleReadiness[] {
+    return ([
+      ["default", this.config.models.default, "agent"],
+      ["planner", this.config.models.planner, this.config.execution.plannerMode],
+      ["worker", this.config.models.worker, this.config.execution.workerMode],
+      ["validator", this.config.models.validator, this.config.execution.validatorMode]
+    ] as const).map(([role, model, executionMode]) => {
+      const auth = getModelAuthReadiness(model);
+      return {
+        role,
+        provider: auth.provider,
+        modelId: auth.modelId,
+        authSource: auth.authSource,
+        envVar: auth.envVar ?? "-",
+        credentialLocation: auth.credentialLocation,
+        hasApiKey: auth.hasApiKey,
+        status: auth.status,
+        suggestedAction: auth.suggestedAction,
+        authHeaderName: auth.authHeaderName,
+        authPrefix: auth.authPrefix,
+        baseUrl: auth.baseUrl,
+        apiPath: auth.apiPath,
+        executionMode
+      };
+    });
+  }
+
+  smokeProvider(role: "default" | "planner" | "worker" | "validator" = "default"): Promise<ProviderSmokeResult> {
+    const model = createModel(
+      role === "planner"
+        ? this.config.models.planner
+        : role === "worker"
+          ? this.config.models.worker
+          : role === "validator"
+            ? this.config.models.validator
+            : this.config.models.default
+    );
+
+    const startedAt = Date.now();
+
+    return complete(model, {
+      systemPrompt: "Respond with exactly READY and nothing else.",
+      messages: [
+        {
+          role: "user",
+          content: "Say READY only.",
+          timestamp: Date.now()
+        }
+      ]
+    }).then(message => ({
+      role,
+      provider: model.provider,
+      modelId: model.id,
+      durationMs: Date.now() - startedAt,
+      stopReason: message.stopReason,
+      text: message.content
+        .filter(part => part.type === "text")
+        .map(part => part.text)
+        .join("\n")
+        .trim(),
+      errorMessage: message.errorMessage
+    }));
+  }
+
+  async doctorProviders(): Promise<ProviderDoctorResult[]> {
+    const readiness = this.getProviderReadiness();
+    const results: ProviderDoctorResult[] = [];
+
+    for (const item of readiness) {
+      if (item.status !== "ready") {
+        results.push({ role: item.role, readiness: item });
+        continue;
+      }
+
+      const smoke = await this.smokeProvider(item.role);
+      results.push({ role: item.role, readiness: item, smoke });
+    }
+
+    return results;
+  }
+
+  async listArtifacts(): Promise<ArtifactMeta[]> {
+    return this.artifactStore.list(this.session.sessionId);
+  }
+
+  private selectModelForTask(taskId: string | null): Model {
+    const owner = taskId ? this.session.taskState.taskOwners[taskId] ?? null : null;
+    const role: ExecutionRole | null =
+      owner === "planner" || owner === "worker" || owner === "validator" ? owner : this.resolveExecutionRole(taskId);
+    return createModel(
+      role === "planner"
+        ? this.config.models.planner
+        : role === "worker"
+          ? this.config.models.worker
+          : role === "validator"
+            ? this.config.models.validator
+            : this.config.models.default
+    );
+  }
+
+  private getExecutionModeForTask(taskId: string | null): "agent" | "fresh" | "subprocess" {
+    const role = this.resolveExecutionRole(taskId);
+    if (role === "planner") {
+      return this.config.execution.plannerMode;
+    }
+    if (role === "validator") {
+      return this.config.execution.validatorMode;
+    }
+    if (role === "worker" && this.config.execution.workerMode === "subprocess") {
+      return "subprocess";
+    }
+    if (role === "worker" && this.config.execution.workerMode === "fresh") {
+      return "fresh";
+    }
+    return "agent";
+  }
+
+  private createCodingAgent(): Agent {
+      const allowed = new Set(
+        getAllowedToolNamesForPhase({
+          phase: this.session.state.phase,
+          flow: this.session.state.currentFlow,
+          activeTaskId: this.session.state.activeTaskId,
+          activeTaskKind: this.session.state.activeTaskId
+            ? this.session.taskState.taskKinds[this.session.state.activeTaskId] ?? null
+            : null,
+          activeTaskStatus: this.session.state.activeTaskId
+            ? this.session.taskState.tasks[this.session.state.activeTaskId] ?? null
+            : null,
+          activeTaskBlocker: this.session.state.activeTaskId
+            ? this.session.taskState.taskBlockers[this.session.state.activeTaskId] ?? null
+            : null,
+          blocker: this.session.state.blocker
+        })
+        );
+      const activeTaskId = this.session.taskState.activeTaskId ?? this.session.state.activeTaskId;
+      return new Agent({
+        model: this.selectModelForTask(activeTaskId),
+        systemPrompt:
+          "You are a coding agent working in a real repository. Use tools to inspect files, create files, and modify code when the task requires implementation. Do not stop at a prose summary when concrete file changes are required. After tool results, continue until you have either completed the task or hit a real blocker.",
+        tools: createDefaultCodingTools(this.session.cwd)
+          .map(tool =>
+            tool.name === "bash"
+              ? createBashTool(this.session.cwd, {
+                  validate: command => validateBashCommandForPhase(this.session.state.phase, command)
+                })
+              : tool
+          )
+          .filter(tool => allowed.has(tool.name))
+      });
+    }
+
+  private getSuggestedNextAction(
+    taskStatus: "todo" | "in_progress" | "validated" | "done" | "blocked" | null
+  ): string {
+      const taskId = this.session.taskState.activeTaskId ?? this.session.state.activeTaskId;
+      const taskKind = taskId ? this.session.taskState.taskKinds[taskId] ?? null : null;
+      const taskOwner = taskId ? this.session.taskState.taskOwners[taskId] ?? null : null;
+      const expectedOutput = taskId ? this.session.taskState.taskExpectedOutputs[taskId] ?? null : null;
+      const verifyCommands = taskId ? this.session.taskState.taskVerificationCommands[taskId] ?? null : null;
+      const pendingDependencies = taskId ? this.getUnsatisfiedTaskDependencies(taskId) : [];
+      if (this.session.state.phase === "completed") {
+        return "Start a new task or create a new long-running plan.";
+      }
+      if (this.session.state.blocker) {
+        if (this.isAutoRecoverableBlockedTask(taskId)) {
+          return this.session.state.blocker.includes("no concrete file changes")
+            ? "Use /continue to retry implementation against the scaffold files and produce real code changes."
+            : "Use /continue to generate the missing task output, then rerun manual review automatically.";
+        }
+        return verifyCommands && verifyCommands.length > 0
+          ? `Resolve the blocker, then use /unblock and rerun ${this.formatVerifyCommands(verifyCommands)}.`
+          : "Resolve the blocker, then use /unblock.";
+      }
+    if (taskStatus === "todo") {
+      if (pendingDependencies.length > 0) {
+        return `Current task is waiting on dependencies: ${pendingDependencies.join(", ")}. Finish those tasks first, then use /continue.`;
+      }
+      return `Use /continue to start ${taskId ? this.formatTaskDescriptor(taskId) : "the current task"}.`;
+    }
+      if (taskStatus === "in_progress") {
+        return verifyCommands && verifyCommands.length > 0
+          ? `Use /continue to verify the current task with ${this.formatVerifyCommands(verifyCommands)}.`
+          : "Use /continue to verify the current task.";
+      }
+    if (taskStatus === "validated") {
+      return "Use /continue to review and finalize the validated task.";
+    }
+      if (taskStatus === "done") {
+        const nextReadyTask = taskId ? this.findNextTodoTaskId(taskId) : null;
+        if (nextReadyTask) {
+          return `Use /continue to activate the next ready task ${this.formatTaskDescriptor(nextReadyTask)}.`;
+        }
+        const nextPendingTask = taskId ? this.findNextPendingTodoTaskId(taskId) : null;
+        if (nextPendingTask) {
+          const dependencies = this.getUnsatisfiedTaskDependencies(nextPendingTask);
+          if (dependencies.length > 0) {
+            return `Next task ${this.formatTaskDescriptor(nextPendingTask)} is waiting on dependencies: ${dependencies.join(", ")}.`;
+          }
+        }
+        const nextMilestoneId = this.getNextMilestoneId();
+        if (nextMilestoneId) {
+          return `Use /continue to advance from ${this.session.taskState.activeMilestoneId} to ${nextMilestoneId}.`;
+        }
+        return "Use /continue to activate the next task or advance the milestone.";
+      }
+      if (taskStatus === "blocked") {
+        if (this.isAutoRecoverableBlockedTask(taskId)) {
+          return this.session.state.blocker?.includes("no concrete file changes")
+            ? "Use /continue to retry implementation with the scaffold files and produce real code changes."
+            : "Use /continue to regenerate task output and resume manual verification.";
+        }
+        return verifyCommands && verifyCommands.length > 0
+          ? `Task is blocked. Fix the issue, then use /unblock and rerun ${this.formatVerifyCommands(verifyCommands)}.`
+          : "Task is blocked. Resolve the issue, then use /unblock.";
+      }
+      if (this.session.state.phase === "paused" && this.session.taskState.resumePhase) {
+        return `Use /continue or /resume to re-enter ${this.session.taskState.resumePhase}.`;
+      }
+      return "Use /status, /continue, or /plan to move forward.";
+  }
+
+  private async runAgentTurn(input: string): Promise<string> {
+    const agent = this.createCodingAgent();
+    await agent.prompt({
+      role: "user",
+      content: input,
+      timestamp: Date.now()
+    });
+
+    const lastMessage = [...agent.state.messages].reverse().find(
+      (message: Message) => message.role === "assistant" || message.role === "tool_result"
+    );
+
+    if (!lastMessage) {
+      return "Agent turn completed";
+    }
+    if (lastMessage.role === "assistant") {
+      const text = lastMessage.content
+        .filter(part => part.type === "text")
+        .map(part => part.text)
+        .join("\n")
+        .trim();
+      return text || (lastMessage.stopReason === "tool_use" ? "Agent requested tool execution" : "Agent turn completed");
+    }
+    return lastMessage.content.map(part => part.text).join("\n").trim() || "Tool result completed";
+  }
+
+  private async readArtifactExcerpt(path: string | null, maxLength = 240): Promise<string | null> {
+    if (!path) {
+      return null;
+    }
+    try {
+      const content = await readFile(path, "utf8");
+      return content.slice(0, maxLength).trim();
+    } catch {
+      return null;
+    }
+  }
+
+  private getOrderedTaskIds(): string[] {
+    return Object.keys(this.session.taskState.tasks).sort((a, b) =>
+      a.localeCompare(b, undefined, { numeric: true })
+    );
+  }
+
+  private getUnsatisfiedTaskDependencies(taskId: string): string[] {
+    const dependencies = this.session.taskState.taskDependencies[taskId] ?? [];
+    return dependencies.filter(dependency => this.session.taskState.tasks[dependency] !== "done");
+  }
+
+  private isAutoRecoverableBlockedTask(taskId: string | null): boolean {
+    if (!taskId) {
+      return false;
+    }
+
+    if (
+      this.session.taskState.taskRecoveryHints[taskId] === "manual_output_required" ||
+      this.session.taskState.taskRecoveryHints[taskId] === "implementation_no_changes"
+    ) {
+      return true;
+    }
+
+    const blocker =
+      this.session.taskState.taskBlockers[taskId] ??
+      (this.session.taskState.activeTaskId === taskId ? this.session.state.blocker : null);
+    const verifyCommands = this.session.taskState.taskVerificationCommands[taskId] ?? [];
+
+    return (
+      Boolean(blocker && blocker.includes("Manual verification requires task output:")) &&
+      verifyCommands.some(command => command.startsWith("manual:")) &&
+      !this.session.taskState.taskOutputs[taskId]
+    ) || Boolean(blocker && blocker.includes("Implementation produced no concrete file changes outside .harness."));
+  }
+
+  private async autoRecoverBlockedTask(taskId: string): Promise<string> {
+    const hint = this.session.taskState.taskRecoveryHints[taskId] ?? null;
+    const blocker =
+      this.session.taskState.taskBlockers[taskId] ??
+      (this.session.taskState.activeTaskId === taskId ? this.session.state.blocker : null);
+    delete this.session.taskState.taskBlockers[taskId];
+    delete this.session.taskState.taskRecoveryHints[taskId];
+    if (this.session.state.blocker) {
+      this.session.taskState.blockers = this.session.taskState.blockers.filter(
+        blocker => blocker !== this.session.state.blocker
+      );
+    }
+    this.session.state.blocker = null;
+    this.session.taskState.tasks[taskId] = "todo";
+    this.session.state.phase = "planning";
+    this.session.state.updatedAt = new Date().toISOString();
+    this.session.taskState.resumePhase = "implementing";
+    await this.persist();
+    const continued = await this.continueTaskLoop();
+    if (hint === "implementation_no_changes" || blocker?.includes("no concrete file changes")) {
+      return `${taskId} was re-queued because the previous implementation made no concrete file changes. ${continued}`;
+    }
+    return `${taskId} was re-queued because manual verification needed task output. ${continued}`;
+  }
+
+  private formatVerifyCommands(commands: string[] | null | undefined): string {
+    if (!commands || commands.length === 0) {
+      return "";
+    }
+
+    return commands
+      .map(command =>
+        command.startsWith("manual:")
+          ? `manual review (${command.slice("manual:".length).trim() || "manual check"})`
+          : `\`${command}\``
+      )
+      .join(", ");
+  }
+
+  private formatTaskDescriptor(taskId: string): string {
+    const text = this.session.taskState.taskTexts[taskId] ?? null;
+    const kind = this.session.taskState.taskKinds[taskId] ?? null;
+    const owner = this.session.taskState.taskOwners[taskId] ?? null;
+    const expectedOutput = this.session.taskState.taskExpectedOutputs[taskId] ?? null;
+    return `${taskId}${kind ? ` (${kind})` : ""}${text ? ` ${text}` : ""}${owner ? ` owned by ${owner}` : ""}${expectedOutput ? ` producing ${expectedOutput}` : ""}`;
+  }
+
+  private getReadyTaskDescriptors(): string[] {
+    return this.getOrderedTaskIds()
+      .filter(taskId => {
+        const taskMilestone = this.session.taskState.taskMilestones[taskId] ?? null;
+        return taskMilestone === null || taskMilestone === this.session.taskState.activeMilestoneId;
+      })
+      .filter(taskId => this.session.taskState.tasks[taskId] === "todo")
+      .filter(taskId => this.getUnsatisfiedTaskDependencies(taskId).length === 0)
+      .map(taskId => this.formatTaskDescriptor(taskId));
+  }
+
+  private getFirstReadyTaskId(): string | null {
+    return (
+      this.getOrderedTaskIds()
+        .filter(taskId => {
+          const taskMilestone = this.session.taskState.taskMilestones[taskId] ?? null;
+          return taskMilestone === null || taskMilestone === this.session.taskState.activeMilestoneId;
+        })
+        .filter(taskId => this.session.taskState.tasks[taskId] === "todo")
+        .find(taskId => this.getUnsatisfiedTaskDependencies(taskId).length === 0) ?? null
+    );
+  }
+
+  private getFirstReadyTaskIdForMilestone(milestoneId: string): string | null {
+    return (
+      this.getOrderedTaskIds()
+        .filter(taskId => (this.session.taskState.taskMilestones[taskId] ?? null) === milestoneId)
+        .filter(taskId => this.session.taskState.tasks[taskId] === "todo")
+        .find(taskId => this.getUnsatisfiedTaskDependencies(taskId).length === 0) ?? null
+    );
+  }
+
+  private getPendingDependencySummaries(): string[] {
+    return this.getOrderedTaskIds()
+      .filter(taskId => {
+        const taskMilestone = this.session.taskState.taskMilestones[taskId] ?? null;
+        return taskMilestone === null || taskMilestone === this.session.taskState.activeMilestoneId;
+      })
+      .filter(taskId => this.session.taskState.tasks[taskId] === "todo")
+      .map(taskId => {
+        const dependencies = this.getUnsatisfiedTaskDependencies(taskId);
+        return dependencies.length > 0
+          ? `${this.formatTaskDescriptor(taskId)} waiting on ${dependencies.join(", ")}`
+          : null;
+      })
+      .filter((value): value is string => value !== null);
+  }
+
+  private getNextMilestoneId(): string | null {
+    const current = this.session.taskState.activeMilestoneId;
+    if (!current) {
+      return null;
+    }
+
+    const ordered = Object.keys(this.session.taskState.milestones).sort((a, b) =>
+      a.localeCompare(b, undefined, { numeric: true })
+    );
+    const currentIndex = ordered.indexOf(current);
+    if (currentIndex === -1) {
+      return null;
+    }
+
+    return ordered[currentIndex + 1] ?? null;
+  }
+
+  private getMilestoneProgress(): string {
+    const values = Object.values(this.session.taskState.milestones);
+    if (values.length === 0) {
+      return "0/0 done";
+    }
+    const done = values.filter(status => status === "done").length;
+    return `${done}/${values.length} done`;
+  }
+
+  private getTaskProgress(): string {
+    const values = Object.values(this.session.taskState.tasks);
+    if (values.length === 0) {
+      return "0/0 done";
+    }
+    const done = values.filter(status => status === "done").length;
+    return `${done}/${values.length} done`;
+  }
+
+  private formatStatusCounts(
+    counts: Record<string, string>,
+    preferredOrder: string[]
+  ): string {
+    const parts = preferredOrder
+      .filter(key => counts[key] !== undefined)
+      .map(key => `${key}=${counts[key]}`);
+    return parts.length > 0 ? parts.join(" ") : "(none)";
+  }
+
+  private getMilestoneStatusCounts(): string {
+    const counts = Object.values(this.session.taskState.milestones).reduce<Record<string, number>>((acc, status) => {
+      acc[status] = (acc[status] ?? 0) + 1;
+      return acc;
+    }, {});
+
+    return this.formatStatusCounts(
+      Object.fromEntries(Object.entries(counts).map(([key, value]) => [key, String(value)])),
+      ["todo", "in_progress", "done", "blocked"]
+    );
+  }
+
+  private getTaskStatusCounts(): string {
+    const counts = Object.values(this.session.taskState.tasks).reduce<Record<string, number>>((acc, status) => {
+      acc[status] = (acc[status] ?? 0) + 1;
+      return acc;
+    }, {});
+
+    return this.formatStatusCounts(
+      Object.fromEntries(Object.entries(counts).map(([key, value]) => [key, String(value)])),
+      ["todo", "in_progress", "validated", "done", "blocked"]
+    );
+  }
+
+  private getUnsatisfiedMilestoneDependencies(milestoneId: string): string[] {
+    const dependencies = this.session.taskState.milestoneDependencies[milestoneId] ?? [];
+    return dependencies.filter(dependency => this.session.taskState.milestones[dependency] !== "done");
+  }
+
+  private findNextPendingTodoTaskId(afterTaskId: string | null): string | null {
+    const ordered = this.getOrderedTaskIds();
+    if (ordered.length === 0) {
+      return null;
+    }
+
+    const startIndex = afterTaskId ? ordered.indexOf(afterTaskId) + 1 : 0;
+    for (const taskId of ordered.slice(Math.max(0, startIndex))) {
+      const taskMilestone = this.session.taskState.taskMilestones[taskId] ?? null;
+      if (
+        this.session.taskState.tasks[taskId] === "todo" &&
+        (taskMilestone === null || taskMilestone === this.session.taskState.activeMilestoneId)
+      ) {
+        return taskId;
+      }
+    }
+    return null;
+  }
+
+  private findNextTodoTaskId(afterTaskId: string | null): string | null {
+    const ordered = this.getOrderedTaskIds();
+    if (ordered.length === 0) {
+      return null;
+    }
+
+    const startIndex = afterTaskId ? ordered.indexOf(afterTaskId) + 1 : 0;
+    for (const taskId of ordered.slice(Math.max(0, startIndex))) {
+      const taskMilestone = this.session.taskState.taskMilestones[taskId] ?? null;
+      if (
+        this.session.taskState.tasks[taskId] === "todo" &&
+        (taskMilestone === null || taskMilestone === this.session.taskState.activeMilestoneId) &&
+        this.getUnsatisfiedTaskDependencies(taskId).length === 0
+      ) {
+        return taskId;
+      }
+    }
+    return null;
+  }
+
+  private resolveExecutionRole(taskId: string | null): ExecutionRole | null {
+    if (!taskId) {
+      return null;
+    }
+
+    const owner = this.session.taskState.taskOwners[taskId] ?? null;
+    if (owner === "planner" || owner === "worker" || owner === "validator") {
+      return owner;
+    }
+
+    const kind = this.session.taskState.taskKinds[taskId] ?? null;
+    if (kind === "analysis") {
+      return "planner";
+    }
+    if (kind === "verification") {
+      return "validator";
+    }
+    if (kind === "implementation") {
+      return "worker";
+    }
+
+    return null;
+  }
+
+  private reopenForNewWork(force = false): void {
+    if (force || this.session.state.phase === "completed" || this.session.state.phase === "cancelled") {
+      this.session.state.phase = "idle";
+      this.session.state.currentFlow = "auto";
+      this.session.state.goalSummary = null;
+      this.session.state.activeSpecPath = null;
+      this.session.state.activePlanPath = null;
+      this.session.state.activeMilestoneId = null;
+      this.session.state.activeTaskId = null;
+      this.session.state.lastVerificationPath = null;
+      this.session.state.lastReviewPath = null;
+      this.session.state.blocker = null;
+      this.session.state.updatedAt = new Date().toISOString();
+
+      this.session.taskState.activeMilestoneId = null;
+      this.session.taskState.activeTaskId = null;
+      this.session.taskState.milestones = {};
+      this.session.taskState.tasks = {};
+      this.session.taskState.taskKinds = {};
+      this.session.taskState.taskOwners = {};
+      this.session.taskState.taskExpectedOutputs = {};
+      this.session.taskState.taskVerificationCommands = {};
+      this.session.taskState.taskDependencies = {};
+      this.session.taskState.milestoneKinds = {};
+      this.session.taskState.milestoneDependencies = {};
+      this.session.taskState.taskOutputs = {};
+      this.session.taskState.taskBlockers = {};
+      this.session.taskState.taskRecoveryHints = {};
+        this.session.taskState.lastVerificationPath = null;
+        this.session.taskState.lastReviewPath = null;
+        this.session.taskState.lastHandoffPath = this.session.state.lastHandoffPath;
+        this.session.taskState.resumePhase = null;
+        this.session.taskState.blockers = [];
+      }
+    }
+
+  async plan(input: string, longRunning = false): Promise<{ specPath: string; planPath: string; milestonePath?: string }> {
+    this.reopenForNewWork(true);
+    this.session.state = transitionPhase(this.session.state, "planning");
+    this.session.state.currentFlow = longRunning ? "milestone" : "disciplined_single";
+    this.session.state.goalSummary = input;
+
+    const spec = await this.artifactStore.write(
+      "spec",
+      `# Spec\n\nGoal: ${input}\n\n## Constraints\n- Fill in concrete requirements\n\n## Success Criteria\n- Deliver a working outcome with verification evidence`,
+      this.session.sessionId
+    );
+      const plan = await this.artifactStore.write(
+        "plan",
+        `# Plan
+
+- [ ] Clarify edge cases | milestone=M1 | kind=analysis | owner=planner | expectedOutput=clarified requirements note | verify=manual:review requirements
+- [ ] Implement the required change | milestone=M2 | kind=implementation | owner=worker | expectedOutput=code changes | dependsOn=T1 | verify=pnpm run test
+- [ ] Verify behavior independently | milestone=M3 | kind=verification | owner=validator | expectedOutput=verification evidence | dependsOn=T2 | verify=pnpm run test`,
+        this.session.sessionId
+      );
+
+    this.session.state.activeSpecPath = spec.path;
+    this.session.state.activePlanPath = plan.path;
+
+      const parsedTasks = parsePlanTasks(`# Plan
+
+- [ ] Clarify edge cases | milestone=M1 | kind=analysis | owner=planner | expectedOutput=clarified requirements note | verify=manual:review requirements
+- [ ] Implement the required change | milestone=M2 | kind=implementation | owner=worker | expectedOutput=code changes | dependsOn=T1 | verify=pnpm run test
+- [ ] Verify behavior independently | milestone=M3 | kind=verification | owner=validator | expectedOutput=verification evidence | dependsOn=T2 | verify=pnpm run test`);
+      const initialTaskId = parsedTasks[0]?.id ?? "T1";
+      for (const task of parsedTasks) {
+        this.session.taskState.tasks[task.id] = task.checked ? "done" : "todo";
+        if (task.milestoneId) {
+          this.session.taskState.taskMilestones[task.id] = task.milestoneId;
+        }
+        this.session.taskState.taskTexts[task.id] = task.text;
+        if (task.kind) {
+          this.session.taskState.taskKinds[task.id] = task.kind;
+        }
+        if (task.owner) {
+          this.session.taskState.taskOwners[task.id] = task.owner;
+        }
+        if (task.expectedOutput) {
+          this.session.taskState.taskExpectedOutputs[task.id] = task.expectedOutput;
+        }
+        if (task.dependsOn) {
+          this.session.taskState.taskDependencies[task.id] = task.dependsOn;
+        }
+        if (task.verifyCommands) {
+          this.session.taskState.taskVerificationCommands[task.id] = task.verifyCommands;
+        }
+      }
+      this.session.state.activeTaskId = initialTaskId;
+      this.session.taskState.activeTaskId = initialTaskId;
+
+      let milestonePath: string | undefined;
+      if (longRunning) {
+        const milestoneContent = `# Milestones
+
+- M1: Scope and plan | kind=planning
+- M2: Implement core slice | kind=implementation | dependsOn=M1
+- M3: Verify and handoff | kind=verification | dependsOn=M2`;
+        const milestones = await this.artifactStore.write(
+          "milestones",
+          milestoneContent,
+          this.session.sessionId
+        );
+        milestonePath = milestones.path;
+        const parsedMilestones = parseMilestones(milestoneContent);
+        const initialMilestoneId = parsedMilestones[0]?.id ?? "M1";
+        this.session.state.activeMilestoneId = initialMilestoneId;
+        this.session.taskState.activeMilestoneId = initialMilestoneId;
+        for (const milestone of parsedMilestones) {
+          this.session.taskState.milestones[milestone.id] =
+            milestone.id === initialMilestoneId ? "in_progress" : "todo";
+          if (milestone.kind) {
+            this.session.taskState.milestoneKinds[milestone.id] = milestone.kind;
+          }
+          this.session.taskState.milestoneTexts[milestone.id] = milestone.text;
+          if (milestone.dependsOn) {
+            this.session.taskState.milestoneDependencies[milestone.id] = milestone.dependsOn;
+          }
+        }
+      } else {
+        this.session.state.activeMilestoneId = null;
+      }
+
+    await this.persist();
+    return { specPath: spec.path, planPath: plan.path, milestonePath };
+  }
+
+  async verify(): Promise<{ path: string; result: VerificationResult }> {
+    if (this.session.state.phase === "completed") {
+      this.reopenForNewWork();
+      if (this.session.state.activeTaskId === null) {
+        this.session.state.activeTaskId = "T1";
+        this.session.taskState.activeTaskId = "T1";
+        this.session.taskState.tasks.T1 = "in_progress";
+      }
+      this.session.state.phase = "implementing";
+    }
+    if (this.session.state.phase === "planning") {
+      this.session.state = transitionPhase(this.session.state, "implementing");
+    }
+    this.session.state = transitionPhase(this.session.state, "verifying");
+      const taskId = this.session.state.activeTaskId;
+      const taskOwner = taskId ? this.session.taskState.taskOwners[taskId] ?? null : null;
+      const usesIndependentValidator =
+        this.session.state.currentFlow === "worker_validator" || taskOwner === "validator";
+      const validatorExecutionMode = this.getExecutionModeForTask(taskId);
+      const validatorAgentSummary =
+        usesIndependentValidator && validatorExecutionMode === "agent"
+          ? await this.runAgentTurn(
+              buildVerificationPrompt({
+                goalSummary: this.session.state.goalSummary,
+                activePlanPath: this.session.state.activePlanPath,
+                activePlanExcerpt: await this.readArtifactExcerpt(this.session.state.activePlanPath),
+                activeSpecExcerpt: await this.readArtifactExcerpt(this.session.state.activeSpecPath),
+                activeMilestoneId: this.session.state.activeMilestoneId,
+                activeTaskId: taskId,
+                taskKind: taskId ? this.session.taskState.taskKinds[taskId] ?? null : null,
+                taskOwner,
+                expectedOutput: taskId ? this.session.taskState.taskExpectedOutputs[taskId] ?? null : null,
+                taskStatus: taskId ? this.session.taskState.tasks[taskId] ?? null : null,
+                verifyCommands: taskId ? this.session.taskState.taskVerificationCommands[taskId] ?? null : null
+              })
+            )
+          : null;
+      const validatorResult =
+          usesIndependentValidator
+            ? validatorExecutionMode === "agent"
+              ? {
+                  role: "validator" as const,
+                  taskId,
+                  summary: validatorAgentSummary ?? `Validator reviewed ${taskId}.`,
+                  evidence: [
+                    `model: ${this.selectModelForTask(taskId).id}`,
+                    `goal: ${this.session.state.goalSummary ?? "(no goal)"}`,
+                    `task: ${taskId ?? "T1"}`,
+                    "context: in-process agent runtime",
+                    "validation path: agent"
+                  ]
+                }
+              : await (validatorExecutionMode === "subprocess" ? this.subprocessExecutor : this.freshExecutor).run({
+                role: "validator",
+                modelId: this.selectModelForTask(taskId).id,
+                cwd: this.session.cwd,
+                goal: this.session.state.goalSummary ?? "(no goal)",
+                activeTaskId: taskId,
+                activeMilestoneId: this.session.state.activeMilestoneId,
+                artifactPaths: (await this.listArtifacts()).map(item => item.path)
+              })
+            : null;
+
+      const verifyCommands = taskId
+        ? this.session.taskState.taskVerificationCommands[taskId] ?? null
+        : null;
+      const commandChecks =
+        this.session.state.currentFlow !== "worker_validator" && verifyCommands && verifyCommands.length > 0
+          ? await Promise.all(
+              verifyCommands.map(async command => {
+                if (command.startsWith("manual:")) {
+                  const detail = command.slice("manual:".length).trim() || "Manual review";
+                  const passed = Boolean(taskId && this.session.taskState.taskOutputs[taskId]);
+                  return {
+                    command,
+                    passed,
+                    detail: passed
+                      ? `Manual verification satisfied: ${detail}`
+                      : `Manual verification requires task output: ${detail}`
+                  };
+                }
+
+                const result = await createBashTool(this.session.cwd).execute("verify-command", { command });
+                const exitCode =
+                  (result.details as { exitCode?: number | null } | undefined)?.exitCode ?? null;
+                const passed = exitCode === 0;
+                return {
+                  command,
+                  passed,
+                  detail:
+                    result.content.map(part => part.text).join("\n").trim() ||
+                    (passed ? "Command passed" : "Command failed")
+                };
+              })
+            )
+          : [];
+      const allCommandsPassed =
+        commandChecks.length > 0 ? commandChecks.every(check => check.passed) : null;
+      const failedCommandDetails = commandChecks.filter(check => !check.passed).map(check => `${check.command}: ${check.detail}`);
+      const commandFailureText = failedCommandDetails.length > 0 ? failedCommandDetails.join("\n") : null;
+
+      const result: VerificationResult = {
+          status: this.session.state.activeTaskId
+            ? allCommandsPassed === false
+              ? "fail"
+              : "pass"
+            : "blocked",
+        mode: usesIndependentValidator ? "independent_validate" : "self_check",
+        provider: this.selectModelForTask(this.session.state.activeTaskId).provider,
+        modelId: this.selectModelForTask(this.session.state.activeTaskId).id,
+        targetTaskId: this.session.state.activeTaskId,
+        expectedOutput: this.session.state.activeTaskId
+          ? this.session.taskState.taskExpectedOutputs[this.session.state.activeTaskId] ?? null
+          : null,
+        taskOutputPath: this.session.state.activeTaskId
+          ? this.session.taskState.taskOutputs[this.session.state.activeTaskId] ?? null
+          : null,
+        summary: this.session.state.activeTaskId
+            ? usesIndependentValidator
+              ? validatorResult?.summary ?? `Validator independently accepted task ${this.session.state.activeTaskId}.`
+                : commandChecks.length > 0
+                  ? `Verification commands ${allCommandsPassed ? "passed" : "failed"} for ${this.session.state.activeTaskId}.`
+                  : `Task ${this.session.state.activeTaskId} has a placeholder verification pass.`
+            : "No active task or plan exists for verification.",
+        evidence: this.session.state.activeTaskId
+          ? [
+                `Active task ${this.session.state.activeTaskId} exists`,
+                usesIndependentValidator
+                  ? "Independent validator path selected"
+                  : "Runtime reached verifying phase",
+                ...commandChecks.map(check => `${check.command}: ${check.detail}`),
+                ...(validatorResult?.evidence ?? [])
+              ]
+          : [],
+        checks: this.session.state.activeTaskId
+          ? [
+            {
+              kind: "runtime",
+              label: "task-present",
+              outcome: "pass",
+              detail: `Task ${this.session.state.activeTaskId} is active in the runtime ledger`
+            },
+              {
+                kind: usesIndependentValidator ? "manual" : "runtime",
+                label: "verification-mode",
+                outcome: "info",
+                detail:
+                  usesIndependentValidator
+                    ? "Independent validator path selected"
+                    : "Self-check path selected"
+              },
+                ...(this.session.state.activeTaskId &&
+                this.session.taskState.taskVerificationCommands[this.session.state.activeTaskId]
+                    ? this.session.taskState.taskVerificationCommands[this.session.state.activeTaskId].map((command, index) => ({
+                      kind: (command.startsWith("manual:")
+                        ? "manual"
+                        : "command") as "command" | "manual",
+                      label: `verify-command-${index + 1}`,
+                      outcome: (commandChecks[index]?.passed === false
+                        ? "fail"
+                        : commandChecks[index]?.passed === true
+                          ? "pass"
+                          : "info") as "pass" | "fail" | "info",
+                      detail: command
+                    }))
+                  : [])
+            ]
+          : [],
+        failedChecks: commandFailureText ? [commandFailureText] : undefined,
+        recoveryHint:
+          commandChecks.some(
+            check => check.command.startsWith("manual:") && check.passed === false
+          ) && this.session.state.activeTaskId && !this.session.taskState.taskOutputs[this.session.state.activeTaskId]
+            ? "manual_output_required"
+            : null,
+        suggestedNextStep: this.session.state.activeTaskId
+          ? this.session.taskState.taskVerificationCommands[this.session.state.activeTaskId]
+            ? allCommandsPassed === false
+              ? `Fix the issue, then re-run: ${this.formatVerifyCommands(this.session.taskState.taskVerificationCommands[this.session.state.activeTaskId])}`
+              : `Run and validate: ${this.formatVerifyCommands(this.session.taskState.taskVerificationCommands[this.session.state.activeTaskId])}`
+            : "Replace placeholder verification with real checks."
+          : "Create or resume a task before verifying."
+      };
+
+    const path = await writeVerificationResult(this.artifactStore, this.session.sessionId, result);
+    this.session.state.lastVerificationStatus = result.status;
+    this.session.taskState.lastVerificationStatus = result.status;
+    this.session.state.lastVerificationPath = path;
+    this.session.taskState.lastVerificationPath = path;
+      if (this.session.taskState.activeTaskId) {
+        this.session.taskState.tasks[this.session.taskState.activeTaskId] =
+          result.status === "pass" ? "validated" : "blocked";
+        if (result.status === "pass") {
+          delete this.session.taskState.taskRecoveryHints[this.session.taskState.activeTaskId];
+        }
+        if (commandFailureText) {
+          this.session.taskState.taskBlockers[this.session.taskState.activeTaskId] = commandFailureText;
+          if (result.recoveryHint) {
+            this.session.taskState.taskRecoveryHints[this.session.taskState.activeTaskId] = result.recoveryHint;
+          } else {
+            delete this.session.taskState.taskRecoveryHints[this.session.taskState.activeTaskId];
+          }
+        }
+      }
+      if (commandFailureText) {
+        this.session.state.blocker = commandFailureText;
+        this.session.taskState.blockers = Array.from(
+          new Set([...this.session.taskState.blockers, commandFailureText])
+        );
+      }
+      this.session.state = transitionPhase(this.session.state, canComplete(result) ? "reviewing" : "paused");
+      this.session.taskState.resumePhase = this.session.state.phase === "paused" ? "implementing" : "reviewing";
+      await this.persist();
+
+    return { path, result };
+  }
+
+  async review(): Promise<string> {
+    const hasPassedVerification = this.session.state.lastVerificationPath !== null;
+    if (hasPassedVerification && this.session.state.phase === "reviewing") {
+      if (this.session.taskState.activeTaskId) {
+        this.session.taskState.tasks[this.session.taskState.activeTaskId] = "done";
+      }
+
+      if (this.session.state.currentFlow === "milestone" && this.session.taskState.activeMilestoneId) {
+        this.session.taskState.milestones[this.session.taskState.activeMilestoneId] = "done";
+        const ordered = Object.keys(this.session.taskState.milestones).sort((a, b) =>
+          a.localeCompare(b, undefined, { numeric: true })
+        );
+        const currentIndex = ordered.indexOf(this.session.taskState.activeMilestoneId);
+        const hasNextMilestone = currentIndex !== -1 && ordered.slice(currentIndex + 1).some(id => {
+          const status = this.session.taskState.milestones[id];
+          return status === "todo" || status === "in_progress";
+        });
+
+        if (hasNextMilestone) {
+          this.session.state = transitionPhase(this.session.state, "paused");
+          this.session.taskState.resumePhase = "planning";
+        } else {
+          this.session.state = transitionPhase(this.session.state, "completed");
+          this.session.taskState.resumePhase = null;
+        }
+      } else {
+        this.session.state = transitionPhase(this.session.state, "completed");
+        this.session.taskState.resumePhase = null;
+      }
+    }
+
+    const taskId = this.session.taskState.activeTaskId ?? this.session.state.activeTaskId;
+    const taskStatus = taskId ? this.session.taskState.tasks[taskId] ?? null : null;
+    const readyTasks = this.getReadyTaskDescriptors();
+    const pendingDependencies = this.getPendingDependencySummaries();
+    const summary = [
+      `Phase: ${this.session.state.phase}`,
+      `Goal: ${this.session.state.goalSummary ?? "(none)"}`,
+      `Spec: ${this.session.state.activeSpecPath ?? "(none)"}`,
+      `Plan: ${this.session.state.activePlanPath ?? "(none)"}`,
+      `Milestone: ${this.session.state.activeMilestoneId ?? "(none)"}`,
+      `Milestone text: ${
+        this.session.state.activeMilestoneId
+          ? this.session.taskState.milestoneTexts[this.session.state.activeMilestoneId] ?? "(none)"
+          : "(none)"
+      }`,
+      `Milestone status: ${
+        this.session.state.activeMilestoneId
+          ? this.session.taskState.milestones[this.session.state.activeMilestoneId] ?? "(none)"
+          : "(none)"
+      }`,
+      `Next milestone: ${this.getNextMilestoneId() ?? "(none)"}`,
+      `Next milestone text: ${
+        this.getNextMilestoneId()
+          ? this.session.taskState.milestoneTexts[this.getNextMilestoneId()!] ?? "(none)"
+          : "(none)"
+      }`,
+      `Milestone progress: ${this.getMilestoneProgress()}`,
+      `Milestone status counts: ${this.getMilestoneStatusCounts()}`,
+      `Task progress: ${this.getTaskProgress()}`,
+      `Task status counts: ${this.getTaskStatusCounts()}`,
+      `Task: ${taskId ?? "(none)"}`,
+      `Task text: ${taskId ? this.session.taskState.taskTexts[taskId] ?? "(none)" : "(none)"}`,
+      `Task status: ${taskStatus ?? "(none)"}`,
+      `Task kind: ${taskId ? this.session.taskState.taskKinds[taskId] ?? "(none)" : "(none)"}`,
+      `Task owner: ${taskId ? this.session.taskState.taskOwners[taskId] ?? "(none)" : "(none)"}`,
+      `Expected output: ${taskId ? this.session.taskState.taskExpectedOutputs[taskId] ?? "(none)" : "(none)"}`,
+      `Task output: ${taskId ? this.session.taskState.taskOutputs[taskId] ?? "(none)" : "(none)"}`,
+      `Provider: ${this.selectModelForTask(taskId).provider}`,
+      `Model: ${this.selectModelForTask(taskId).id}`,
+      `Temperature: ${this.selectModelForTask(taskId).temperature ?? "(none)"}`,
+      `Max tokens: ${this.selectModelForTask(taskId).maxTokens ?? "(none)"}`,
+      `Execution mode: ${this.getExecutionModeForTask(taskId)}`,
+      `Verification status: ${this.session.state.lastVerificationStatus ?? "(none)"}`,
+      `Recovery hint: ${taskId ? this.session.taskState.taskRecoveryHints[taskId] ?? "(none)" : "(none)"}`,
+      `Verification: ${this.session.state.lastVerificationPath ?? "(none)"}`,
+      `Handoff: ${this.session.state.lastHandoffPath ?? "(none)"}`,
+      `Ready tasks: ${readyTasks.length > 0 ? readyTasks.join(" | ") : "(none)"}`,
+      `Pending dependencies: ${pendingDependencies.length > 0 ? pendingDependencies.join(" | ") : "(none)"}`,
+      `Allowed tools: ${this.getStatus().allowedTools.join(", ")}`,
+      `Next action: ${this.getSuggestedNextAction(taskStatus)}`
+      ].join("\n");
+    const meta = await this.artifactStore.write("review", `# Review\n\n${summary}`, this.session.sessionId);
+    this.session.state.lastReviewPath = meta.path;
+    this.session.taskState.lastReviewPath = meta.path;
+    await this.persist();
+    return meta.path;
+  }
+
+  async advanceMilestone(): Promise<string> {
+    const current = this.session.taskState.activeMilestoneId;
+    if (!current) {
+      return "No active milestone";
+    }
+
+    const ordered = Object.keys(this.session.taskState.milestones).sort((a, b) =>
+      a.localeCompare(b, undefined, { numeric: true })
+    );
+    const currentIndex = ordered.indexOf(current);
+    if (currentIndex === -1) {
+      return `Unknown milestone: ${current}`;
+    }
+
+    this.session.taskState.milestones[current] = "done";
+
+    const next = ordered[currentIndex + 1];
+    if (!next) {
+      this.session.state.phase = "completed";
+      this.session.state.updatedAt = new Date().toISOString();
+      this.session.state.activeMilestoneId = current;
+      this.session.state.activeTaskId = null;
+      this.session.taskState.activeTaskId = null;
+      await this.persist();
+      return `${current} completed; no remaining milestones`;
+    }
+
+    const milestoneDependencies = this.getUnsatisfiedMilestoneDependencies(next);
+    if (milestoneDependencies.length > 0) {
+      this.session.state.phase = "paused";
+      this.session.state.blocker = `Milestone ${next} is waiting on dependencies: ${milestoneDependencies.join(", ")}`;
+      this.session.state.updatedAt = new Date().toISOString();
+      this.session.taskState.resumePhase = "planning";
+      await this.persist();
+      return `Cannot activate ${next}; waiting on milestone dependencies: ${milestoneDependencies.join(", ")}`;
+    }
+
+    const nextTaskId = this.getFirstReadyTaskIdForMilestone(next) ?? `T${currentIndex + 2}`;
+    this.session.taskState.milestones[next] = "in_progress";
+    this.session.taskState.tasks[nextTaskId] = "todo";
+    this.session.taskState.activeMilestoneId = next;
+    this.session.taskState.activeTaskId = nextTaskId;
+    this.session.state.activeMilestoneId = next;
+    this.session.state.activeTaskId = nextTaskId;
+    this.session.state.phase = "planning";
+    this.session.state.currentFlow = "milestone";
+    this.session.state.lastVerificationPath = null;
+    this.session.state.lastReviewPath = null;
+    this.session.state.updatedAt = new Date().toISOString();
+    this.session.taskState.lastVerificationPath = null;
+    this.session.taskState.lastReviewPath = null;
+    await this.persist();
+    return `${current} completed; ${next} is now active`;
+  }
+
+  async continueTaskLoop(): Promise<string> {
+    if (this.session.state.phase === "completed") {
+      return "Run is completed; start a new task or long-running plan.";
+    }
+
+    this.session.state.activeTaskId = this.session.taskState.activeTaskId;
+    this.session.state.activeMilestoneId = this.session.taskState.activeMilestoneId;
+
+    if (this.session.state.phase === "paused" && this.session.state.blocker === null) {
+      const resumed = await this.resume();
+      const continued = await this.continueTaskLoop();
+      return `Resumed into ${resumed}. ${continued}`;
+    }
+
+    const taskId = this.session.taskState.activeTaskId;
+    if (!taskId) {
+      const nextReadyTaskId = this.getFirstReadyTaskId();
+      if (!nextReadyTaskId) {
+        return "No active task";
+      }
+      this.session.taskState.activeTaskId = nextReadyTaskId;
+      this.session.state.activeTaskId = nextReadyTaskId;
+      this.session.state.phase = "planning";
+      this.session.state.updatedAt = new Date().toISOString();
+      await this.persist();
+      const continued = await this.continueTaskLoop();
+      return `No active task was set; ${nextReadyTaskId} is now active. ${continued}`;
+    }
+
+    const taskStatus = this.session.taskState.tasks[taskId];
+    if (taskStatus === "todo") {
+      const pendingDependencies = this.getUnsatisfiedTaskDependencies(taskId);
+      if (pendingDependencies.length > 0) {
+        this.session.state.phase = "paused";
+        this.session.state.updatedAt = new Date().toISOString();
+        this.session.taskState.resumePhase = "planning";
+        await this.persist();
+        return `${taskId} is waiting on dependencies: ${pendingDependencies.join(", ")}. ${this.getSuggestedNextAction("todo")}`;
+      }
+      if (this.session.taskState.taskKinds[taskId] === "verification") {
+        this.session.taskState.tasks[taskId] = "in_progress";
+        await this.persist();
+        const verification = await this.verify();
+        return `${taskId} verification task -> ${verification.result.status}. Next: ${this.getSuggestedNextAction(
+          verification.result.status === "pass" ? "validated" : "blocked"
+        )}`;
+      }
+      await this.executeCurrentTask();
+      return `${taskId} moved to in_progress`;
+    }
+
+    if (taskStatus === "in_progress") {
+      const verification = await this.verify();
+      return `${taskId} verification -> ${verification.result.status}. Next: ${this.getSuggestedNextAction("validated")}`;
+    }
+
+    if (taskStatus === "validated") {
+      const reviewPath = await this.review();
+      return `${taskId} review -> ${reviewPath}. Next: ${this.getSuggestedNextAction("done")}`;
+    }
+
+    if (taskStatus === "done") {
+      const nextTaskId = this.findNextTodoTaskId(taskId);
+      if (nextTaskId) {
+        this.session.taskState.activeTaskId = nextTaskId;
+        this.session.state.activeTaskId = nextTaskId;
+        this.session.state.phase = "planning";
+        this.session.state.updatedAt = new Date().toISOString();
+        await this.persist();
+        return `${taskId} complete; ${nextTaskId} is now active`;
+      }
+      const nextPendingTaskId = this.findNextPendingTodoTaskId(taskId);
+      if (nextPendingTaskId) {
+        const pendingDependencies = this.getUnsatisfiedTaskDependencies(nextPendingTaskId);
+        this.session.state.phase = "paused";
+        this.session.state.activeTaskId = nextPendingTaskId;
+        this.session.taskState.activeTaskId = nextPendingTaskId;
+        this.session.state.updatedAt = new Date().toISOString();
+        this.session.taskState.resumePhase = "planning";
+        await this.persist();
+        return `${taskId} complete; ${nextPendingTaskId} is waiting on dependencies: ${pendingDependencies.join(", ")}.`;
+      }
+      const advanced = await this.advanceMilestone();
+      if (this.session.state.phase === "planning" && this.session.state.blocker === null) {
+        const continued = await this.continueTaskLoop();
+        return `${advanced}. ${continued}`;
+      }
+      return advanced;
+    }
+
+    if (taskStatus === "blocked") {
+      if (this.isAutoRecoverableBlockedTask(taskId)) {
+        return this.autoRecoverBlockedTask(taskId);
+      }
+      const blocker = this.session.taskState.taskBlockers[taskId] ?? "unknown blocker";
+      return `${taskId} is blocked: ${blocker}. ${this.getSuggestedNextAction("blocked")}`;
+    }
+
+    return `${taskId} has no continuation path`;
+  }
+
+  async runCompletionLoop(maxSteps = 10): Promise<string[]> {
+    return (await this.runCompletionLoopDetailed(maxSteps)).steps;
+  }
+
+  async runCompletionLoopDetailed(maxSteps = 10): Promise<CompletionLoopResult> {
+    const steps: string[] = [];
+    let stopReason: CompletionLoopResult["stopReason"] = "max_steps";
+
+    for (let index = 0; index < maxSteps; index += 1) {
+      if (this.session.state.phase === "completed") {
+        stopReason = "completed";
+        break;
+      }
+      const activeTaskId = this.session.taskState.activeTaskId ?? this.session.state.activeTaskId;
+      if (
+        this.session.state.phase === "paused" &&
+        this.session.state.blocker &&
+        !this.isAutoRecoverableBlockedTask(activeTaskId)
+      ) {
+        stopReason = "blocked";
+        break;
+      }
+
+      const before = JSON.stringify({
+        phase: this.session.state.phase,
+        milestone: this.session.taskState.activeMilestoneId,
+        task: this.session.taskState.activeTaskId,
+        taskStatus: this.session.taskState.activeTaskId
+          ? this.session.taskState.tasks[this.session.taskState.activeTaskId] ?? null
+          : null,
+        blocker: this.session.state.blocker
+      });
+
+      const result = await this.continueTaskLoop();
+      steps.push(result);
+
+      const after = JSON.stringify({
+        phase: this.session.state.phase,
+        milestone: this.session.taskState.activeMilestoneId,
+        task: this.session.taskState.activeTaskId,
+        taskStatus: this.session.taskState.activeTaskId
+          ? this.session.taskState.tasks[this.session.taskState.activeTaskId] ?? null
+          : null,
+        blocker: this.session.state.blocker
+      });
+
+      if (before === after) {
+        stopReason = "no_progress";
+        break;
+      }
+
+      if (
+        this.session.state.phase === "paused" &&
+        this.session.state.blocker &&
+        !this.isAutoRecoverableBlockedTask(this.session.taskState.activeTaskId ?? this.session.state.activeTaskId)
+      ) {
+        stopReason = "blocked";
+        break;
+      }
+    }
+
+    return {
+      steps,
+      stopReason,
+      finalPhase: this.session.state.phase,
+      finalMilestoneId: this.session.taskState.activeMilestoneId ?? this.session.state.activeMilestoneId,
+      finalTaskId: this.session.taskState.activeTaskId ?? this.session.state.activeTaskId,
+      blocker: this.session.state.blocker,
+      completed: this.session.state.phase === "completed"
+    };
+  }
+
+  async executeCurrentTask(): Promise<string> {
+    this.reopenForNewWork();
+    if (this.session.state.currentFlow === "auto") {
+      this.session.state.currentFlow = this.session.state.activeMilestoneId ? "milestone" : "disciplined_single";
+    }
+      if (this.session.state.phase === "planning") {
+        this.session.state = transitionPhase(this.session.state, "implementing");
+      } else if (this.session.state.phase === "paused") {
+      this.session.state = transitionPhase(this.session.state, "implementing");
+    }
+
+    if (this.session.state.activeTaskId === null) {
+      this.session.state.activeTaskId = "T1";
+      this.session.taskState.activeTaskId = "T1";
+    }
+
+      const taskId = this.session.state.activeTaskId;
+      const role = this.resolveExecutionRole(taskId);
+      const activeModel = this.selectModelForTask(taskId);
+      const executionMode = this.getExecutionModeForTask(taskId);
+      const beforeSnapshot =
+        role === "worker" && executionMode === "agent"
+          ? await this.captureWorkspaceFileSnapshot()
+          : null;
+      await this.bootstrapBlankNodeCliProjectIfNeeded(taskId, role);
+      const useIsolatedExecutor =
+        this.session.state.currentFlow === "worker_validator" ||
+        (role !== null && executionMode !== "agent");
+      const useSubprocessWorker = role !== null && executionMode === "subprocess";
+      this.session.taskState.tasks[taskId] = "in_progress";
+      this.session.taskState.resumePhase = "implementing";
+      const workerResult =
+        useIsolatedExecutor
+          ? await (useSubprocessWorker ? this.subprocessExecutor : this.freshExecutor).run({
+              role: this.session.state.currentFlow === "worker_validator" ? "worker" : role ?? "worker",
+              modelId: activeModel.id,
+              cwd: this.session.cwd,
+              goal: this.session.state.goalSummary ?? "(no goal)",
+              activeTaskId: taskId,
+              activeMilestoneId: this.session.state.activeMilestoneId,
+              artifactPaths: (await this.listArtifacts()).map(item => item.path)
+            })
+          : null;
+
+      const agentSummary =
+        this.session.state.currentFlow === "worker_validator"
+          ? workerResult?.summary ?? `Worker executing task ${taskId}.`
+          : useIsolatedExecutor
+            ? workerResult?.summary ??
+              `${role === "planner" ? "Planner" : role === "validator" ? "Validator" : "Worker"} executing task ${taskId}.`
+          : await this.runAgentTurn(
+              buildExecutionPrompt({
+                goalSummary: this.session.state.goalSummary,
+                activePlanPath: this.session.state.activePlanPath,
+                activePlanExcerpt: await this.readArtifactExcerpt(this.session.state.activePlanPath),
+                activeSpecExcerpt: await this.readArtifactExcerpt(this.session.state.activeSpecPath),
+                activeMilestoneId: this.session.state.activeMilestoneId,
+                activeTaskId: taskId,
+                taskKind: taskId
+                  ? this.session.taskState.taskKinds[taskId] ?? null
+                  : null,
+                taskOwner: taskId
+                  ? this.session.taskState.taskOwners[taskId] ?? null
+                  : null,
+                expectedOutput: taskId
+                  ? this.session.taskState.taskExpectedOutputs[taskId] ?? null
+                  : null,
+                taskStatus: taskId
+                  ? this.session.taskState.tasks[taskId] ?? null
+                  : null,
+                blocker: taskId ? this.session.taskState.taskBlockers[taskId] ?? this.session.state.blocker : this.session.state.blocker,
+                scaffoldFiles: role === "worker" ? this.getBootstrapScaffoldFiles() : null
+              })
+            );
+      const changedFiles =
+        beforeSnapshot === null
+          ? []
+          : this.diffWorkspaceSnapshots(beforeSnapshot, await this.captureWorkspaceFileSnapshot());
+
+      const executionNoteBody = [
+        "# Task Output",
+        "",
+        `Task: ${taskId}`,
+        `Role: ${role ?? "agent"}`,
+        `Model: ${activeModel.id}`,
+        `Milestone: ${this.session.state.activeMilestoneId ?? "(none)"}`,
+        `Goal: ${this.session.state.goalSummary ?? "(no goal)"}`,
+        `Expected output: ${taskId ? this.session.taskState.taskExpectedOutputs[taskId] ?? "(none)" : "(none)"}`,
+        "",
+        "## Changed Files",
+        ...(changedFiles.length > 0 ? changedFiles.map(path => `- ${path}`) : ["- (none)"]),
+        "",
+        "## Summary",
+        agentSummary
+      ].join("\n");
+
+      const executionNote = await this.artifactStore.write(
+        "note",
+        executionNoteBody,
+        this.session.sessionId
+      );
+    this.session.taskState.taskOutputs[taskId] = executionNote.path;
+    delete this.session.taskState.taskRecoveryHints[taskId];
+    if (role === "worker" && executionMode === "agent" && activeModel.provider !== "local" && changedFiles.length === 0) {
+      const reason = "Implementation produced no concrete file changes outside .harness.";
+      this.session.taskState.tasks[taskId] = "blocked";
+      this.session.taskState.taskBlockers[taskId] = reason;
+      this.session.taskState.taskRecoveryHints[taskId] = "implementation_no_changes";
+      this.session.taskState.blockers = Array.from(new Set([...this.session.taskState.blockers, reason]));
+      this.session.state.blocker = reason;
+      this.session.state.phase = "paused";
+    }
+    await this.persist();
+    return taskId;
+  }
+
+  async completeCurrentTask(): Promise<string> {
+    const taskId = this.session.taskState.activeTaskId;
+    if (!taskId) {
+      return "No active task";
+    }
+    this.session.taskState.tasks[taskId] = "done";
+    this.session.state.phase = "reviewing";
+    this.session.state.updatedAt = new Date().toISOString();
+    await this.persist();
+    return `${taskId} marked done`;
+  }
+
+  async blockCurrentTask(reason: string): Promise<string> {
+    const taskId = this.session.taskState.activeTaskId;
+    if (!taskId) {
+      return "No active task";
+    }
+    this.session.taskState.tasks[taskId] = "blocked";
+    this.session.taskState.taskBlockers[taskId] = reason;
+    delete this.session.taskState.taskRecoveryHints[taskId];
+    this.session.taskState.blockers = Array.from(new Set([...this.session.taskState.blockers, reason]));
+    this.session.state.blocker = reason;
+    this.session.state.phase = "paused";
+    this.session.state.updatedAt = new Date().toISOString();
+    this.session.taskState.resumePhase = "implementing";
+    await this.persist();
+    return `${taskId} blocked: ${reason}`;
+  }
+
+  async unblockCurrentTask(): Promise<string> {
+    const taskId = this.session.taskState.activeTaskId;
+    if (!taskId) {
+      return "No active task";
+    }
+    delete this.session.taskState.taskBlockers[taskId];
+    delete this.session.taskState.taskRecoveryHints[taskId];
+    this.session.taskState.blockers = this.session.taskState.blockers.filter(
+      blocker => blocker !== this.session.state.blocker
+    );
+    this.session.taskState.tasks[taskId] = "todo";
+    this.session.state.blocker = null;
+    this.session.state.phase = "paused";
+    this.session.state.updatedAt = new Date().toISOString();
+    this.session.taskState.resumePhase = "implementing";
+    await this.persist();
+    return `${taskId} moved back to todo and is ready to continue`;
+  }
+
+  async enterWorkerValidator(taskDescription?: string): Promise<string> {
+    this.session.state.currentFlow = "worker_validator";
+      if (this.session.state.phase === "idle") {
+        this.session.state = transitionPhase(this.session.state, "planning");
+      }
+    if (this.session.state.activeTaskId === null) {
+      this.session.state.activeTaskId = "T1";
+      this.session.taskState.activeTaskId = "T1";
+    }
+      this.session.taskState.tasks[this.session.state.activeTaskId] = "in_progress";
+      this.session.taskState.resumePhase = "implementing";
+      const note = await this.artifactStore.write(
+      "note",
+      `Worker-validator flow initialized for ${this.session.state.activeTaskId}.${taskDescription ? `\n\nTask: ${taskDescription}` : ""}`,
+      this.session.sessionId
+    );
+    this.session.taskState.taskOutputs[this.session.state.activeTaskId] = note.path;
+    await this.persist();
+    return this.session.state.activeTaskId;
+  }
+
+  async resume(): Promise<string> {
+        const targetPhase: Phase =
+          this.session.state.phase === "paused"
+            ? (this.session.taskState.resumePhase ?? (this.session.state.activePlanPath ? "planning" : "implementing"))
+            : this.session.state.phase;
+
+      if (this.session.state.phase === "paused") {
+        this.session.state.blocker = null;
+        this.session.taskState.blockers = [];
+        this.session.state = transitionPhase(this.session.state, targetPhase);
+        this.session.taskState.resumePhase = targetPhase;
+        await this.persist();
+      }
+
+    return this.session.state.phase;
+  }
+
+  async handleInput(rawInput: string): Promise<string> {
+    const isExplicitCommand = rawInput.trim().startsWith("/");
+    if (!isExplicitCommand) {
+      this.reopenForNewWork(true);
+    } else {
+      this.reopenForNewWork();
+    }
+    const { explicitMode, strippedInput } = parseCommand(rawInput);
+    const route = routeFlow({
+      rawInput: strippedInput,
+      explicitMode,
+      currentPhase: this.session.state.phase,
+      hasActivePlan: this.session.state.activePlanPath !== null,
+      hasVerificationTarget: this.session.state.activeTaskId !== null || this.session.state.activePlanPath !== null,
+      hasPendingHandoff: this.session.state.lastHandoffPath !== null,
+      hasActiveMilestone: this.session.state.activeMilestoneId !== null
+    });
+
+      this.session.state.currentFlow = route.selectedFlow;
+      if (route.blocked) {
+        return `Blocked: ${route.blocked.message}`;
+      }
+
+    const goalInput = strippedInput || "(empty request)";
+    const goalMeta = await this.artifactStore.write(
+      "goal_summary",
+      goalInput,
+      this.session.sessionId
+    );
+
+    if (route.nextPhase === "planning") {
+      const planned = await this.plan(goalInput, route.selectedFlow === "milestone");
+      if (route.selectedFlow === "worker_validator") {
+        this.session.state.currentFlow = "worker_validator";
+        await this.persist();
+      }
+      return [
+        `Phase: ${this.session.state.phase}`,
+        `Flow: ${this.session.state.currentFlow}`,
+        `Reasons: ${route.classification.reasons.join("; ")}`,
+        `Goal: ${goalMeta.path}`,
+        `Spec: ${planned.specPath}`,
+        `Plan: ${planned.planPath}`,
+        planned.milestonePath ? `Milestones: ${planned.milestonePath}` : null
+      ]
+        .filter(Boolean)
+        .join("\n");
+    }
+
+    this.session.state = transitionPhase(this.session.state, route.nextPhase);
+    this.session.state.goalSummary = strippedInput || this.session.state.goalSummary;
+
+    if (route.nextPhase === "implementing" && this.session.state.activeTaskId === null) {
+      this.session.state.activeTaskId = "T1";
+      this.session.taskState.activeTaskId = "T1";
+      this.session.taskState.tasks.T1 = "in_progress";
+    }
+
+    await this.persist();
+
+    return [
+      `Phase: ${this.session.state.phase}`,
+      `Flow: ${route.selectedFlow}`,
+      `Reasons: ${route.classification.reasons.join("; ")}`,
+      `Goal: ${goalMeta.path}`
+    ].join("\n");
+  }
+
+  async createHandoff(nextStep?: string): Promise<string> {
+    const artifacts = await this.listArtifacts();
+    const taskId = this.session.taskState.activeTaskId ?? this.session.state.activeTaskId;
+    const taskStatus = taskId ? this.session.taskState.tasks[taskId] ?? null : null;
+    const readyTasks = this.getReadyTaskDescriptors();
+    const pendingDependencies = this.getPendingDependencySummaries();
+    const handoffPath = await createHandoff(this.artifactStore, {
+      sessionId: this.session.sessionId,
+      goal: this.session.state.goalSummary,
+      phase: this.session.state.phase,
+      activeSpecPath: this.session.state.activeSpecPath,
+      activePlanPath: this.session.state.activePlanPath,
+      activeMilestoneId: this.session.state.activeMilestoneId,
+      activeMilestoneText: this.session.state.activeMilestoneId
+        ? this.session.taskState.milestoneTexts[this.session.state.activeMilestoneId] ?? null
+        : null,
+      activeMilestoneStatus: this.session.state.activeMilestoneId
+        ? this.session.taskState.milestones[this.session.state.activeMilestoneId] ?? null
+        : null,
+      nextMilestoneId: this.getNextMilestoneId(),
+      nextMilestoneText: this.getNextMilestoneId()
+        ? this.session.taskState.milestoneTexts[this.getNextMilestoneId()!] ?? null
+        : null,
+      milestoneProgress: this.getMilestoneProgress(),
+      milestoneStatusCounts: this.getMilestoneStatusCounts(),
+      taskProgress: this.getTaskProgress(),
+      taskStatusCounts: this.getTaskStatusCounts(),
+      activeTaskId: taskId,
+      activeTaskText: taskId ? this.session.taskState.taskTexts[taskId] ?? null : null,
+      activeTaskStatus: taskStatus,
+      activeTaskKind: taskId ? this.session.taskState.taskKinds[taskId] ?? null : null,
+      activeTaskOwner: taskId ? this.session.taskState.taskOwners[taskId] ?? null : null,
+      activeTaskExpectedOutput: taskId ? this.session.taskState.taskExpectedOutputs[taskId] ?? null : null,
+      activeTaskOutputPath: taskId ? this.session.taskState.taskOutputs[taskId] ?? null : null,
+      activeProvider: this.selectModelForTask(taskId).provider,
+      activeModelId: this.selectModelForTask(taskId).id,
+      activeModelTemperature: this.selectModelForTask(taskId).temperature ?? null,
+      activeModelMaxTokens: this.selectModelForTask(taskId).maxTokens ?? null,
+      activeExecutionMode: this.getExecutionModeForTask(taskId),
+      lastVerificationStatus: this.session.state.lastVerificationStatus,
+      activeTaskRecoveryHint: taskId ? this.session.taskState.taskRecoveryHints[taskId] ?? null : null,
+      readyTasks,
+      pendingDependencies,
+      allowedTools: this.getStatus().allowedTools,
+      artifactPaths: artifacts.map(item => item.path),
+      nextStep: nextStep ?? this.getSuggestedNextAction(taskStatus),
+      verificationPath: this.session.state.lastVerificationPath,
+      blocker: this.session.state.blocker
+    });
+    this.session.state.lastHandoffPath = handoffPath;
+    this.session.taskState.lastHandoffPath = handoffPath;
+    await this.persist();
+    return handoffPath;
+  }
+
+  async reset(): Promise<string> {
+    const isActivePhase =
+      this.session.state.phase !== "idle" &&
+      this.session.state.phase !== "completed" &&
+      this.session.state.phase !== "cancelled";
+
+    if (isActivePhase && this.session.state.lastHandoffPath === null) {
+      return "Blocked: Create a handoff before resetting an active session.";
+    }
+
+    const preservedHandoff = this.session.state.lastHandoffPath;
+    this.session.state = {
+      ...createInitialRunState(),
+      lastHandoffPath: preservedHandoff
+    };
+    this.session.taskState = createInitialTaskState();
+    this.session.taskState.lastHandoffPath = preservedHandoff;
+    this.session.state.currentFlow = "auto";
+    await this.persist();
+    return `Session reset${preservedHandoff ? ` (handoff preserved: ${preservedHandoff})` : ""}`;
+  }
+
+  private async persist(): Promise<void> {
+    await saveRunState(this.statePath, this.session.state);
+    await saveTaskState(this.taskStatePath, this.session.taskState as TaskState);
+  }
+}

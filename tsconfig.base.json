@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "baseUrl": ".",
+    "paths": {
+      "@doo/harness-ai": ["packages/ai/src/index.ts"],
+      "@doo/harness-agent-core": ["packages/agent-core/src/index.ts"],
+      "@doo/harness-runtime": ["packages/harness-runtime/src/index.ts"],
+      "@doo/harness-tui": ["packages/tui/src/index.ts"],
+      "@doo/harness-extensions": ["packages/extensions/src/index.ts"]
+    },
+    "strict": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "skipLibCheck": true,
+    "typeRoots": ["./node_modules/@types"],
+    "types": ["node"],
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true
+  }
+}

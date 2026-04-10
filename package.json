@@ -1,0 +1,19 @@
+{
+  "name": "@doo/harness-workspace",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "check": "tsc -p tsconfig.json --pretty false",
+    "dev": "node --import tsx packages/cli/src/main.ts",
+    "test": "node --import tsx --test tests/**/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.2"
+  }
+}
