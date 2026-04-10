@@ -215,3 +215,7 @@ The long-term integration goal is therefore:
 
 - let `pi-coding-agent` provide more of the substrate
 - keep long-running runtime ownership local to the harness
+
+See also:
+
+- `pi-migration-plan.md` for a staged migration outline
