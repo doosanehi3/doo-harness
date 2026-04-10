@@ -46,6 +46,23 @@ The following should remain local runtime concerns:
 - task and milestone ownership
 - handoff and reset semantics
 
+## Ownership Test
+
+The key ownership question is:
+
+- who decides the next state transition?
+
+If the answer is still the harness runtime, ownership remains local even when
+the substrate moves under `pi-coding-agent`.
+
+In practice, that means the harness layer must keep deciding:
+
+- phase transitions
+- active task and milestone selection
+- verification pass/fail gating
+- blocker and recovery transitions
+- reset and resume eligibility
+
 ## Proposed Migration Stages
 
 ### Stage 1. Keep current hybrid, reduce duplicate seams
