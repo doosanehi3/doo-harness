@@ -294,6 +294,35 @@ test("auto long-running input uses rich planning runtime artifacts", async () =>
   }
 });
 
+test("node cli longrun planning writes a concrete spec and plan for blank-repo goals", async () => {
+  const cwd = await createTempHarnessDir();
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan(
+      "Build a dependency-free Node.js CLI called task-keeper that stores tasks in a local JSON file and supports add, list, done, remove, and stats commands with tests and a README.",
+      true
+    );
+
+    const specBody = await readFile(join(cwd, ".harness", "artifacts", "spec.md"), "utf8");
+    const planBody = await readFile(join(cwd, ".harness", "artifacts", "plan.md"), "utf8");
+    const status = runtime.getStatus();
+    const taskState = runtime.getTaskStateSnapshot();
+
+    assert.match(specBody, /task-keeper/);
+    assert.match(specBody, /task-keeper\.tasks\.json/);
+    assert.match(specBody, /add, list, done, remove, and stats/);
+    assert.match(planBody, /Define the CLI contract and persistence behavior/);
+    assert.match(planBody, /Implement the CLI commands, JSON persistence, README, and tests/);
+    assert.match(planBody, /Verify the CLI behavior independently/);
+    assert.equal(status.activeTaskText, "Define the CLI contract and persistence behavior");
+    assert.equal(taskState.taskExpectedOutputs.T1, "command contract note");
+    assert.equal(taskState.taskExpectedOutputs.T2, "working CLI, README, and tests");
+    assert.deepEqual(taskState.taskVerificationCommands.T2, ["pnpm run test"]);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("blockCurrentTask pauses the runtime and records blocker", async () => {
   const cwd = await createTempHarnessDir();
   try {
@@ -878,6 +907,72 @@ test("runCompletionLoop can drive a configured long-running plan to completion",
     assert.equal(status.activeMilestoneId, "M3");
     assert.equal(status.milestoneProgress, "3/3 done");
     assert.equal(status.taskProgress, "3/3 done");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("continueTaskLoop auto-recovers implementation verification failures back into execution", async () => {
+  const cwd = await createTempHarnessDir();
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("Implementation fix recovery demo", true);
+    await runtime.advanceMilestone();
+    const taskStateBefore = runtime.getTaskStateSnapshot();
+    taskStateBefore.taskVerificationCommands.T2 = ["node -e \"process.exit(1)\""];
+    taskStateBefore.taskDependencies.T2 = [];
+    await saveTaskState(join(cwd, ".harness", "artifacts", "task-state.json"), taskStateBefore);
+    const refreshed = await HarnessRuntime.create(cwd);
+    await refreshed.executeCurrentTask();
+
+    const verification = await refreshed.verify();
+    let status = refreshed.getStatus();
+    let taskState = refreshed.getTaskStateSnapshot();
+
+    assert.equal(verification.result.status, "fail");
+    assert.equal(status.phase, "paused");
+    assert.equal(taskState.tasks.T2, "blocked");
+    assert.equal(taskState.taskRecoveryHints.T2, "implementation_fix_required");
+
+    const continued = await refreshed.continueTaskLoop();
+    status = refreshed.getStatus();
+    taskState = refreshed.getTaskStateSnapshot();
+
+    assert.match(continued, /implementation verification failed/i);
+    assert.equal(status.phase, "implementing");
+    assert.equal(taskState.tasks.T2, "in_progress");
+    assert.equal(taskState.taskRecoveryHints.T2, undefined);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("continueTaskLoop auto-recovers legacy implementation verification failures without a recovery hint", async () => {
+  const cwd = await createTempHarnessDir();
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("Legacy implementation fix recovery demo", true);
+    await runtime.advanceMilestone();
+    const taskStateBefore = runtime.getTaskStateSnapshot();
+    taskStateBefore.taskVerificationCommands.T2 = ["node -e \"process.exit(1)\""];
+    taskStateBefore.taskDependencies.T2 = [];
+    await saveTaskState(join(cwd, ".harness", "artifacts", "task-state.json"), taskStateBefore);
+    const refreshed = await HarnessRuntime.create(cwd);
+    await refreshed.executeCurrentTask();
+    await refreshed.verify();
+
+    const blockedState = refreshed.getTaskStateSnapshot();
+    delete blockedState.taskRecoveryHints.T2;
+    await saveTaskState(join(cwd, ".harness", "artifacts", "task-state.json"), blockedState);
+    const legacy = await HarnessRuntime.create(cwd);
+
+    const continued = await legacy.continueTaskLoop();
+    const status = legacy.getStatus();
+    const taskState = legacy.getTaskStateSnapshot();
+
+    assert.match(continued, /implementation verification failed/i);
+    assert.equal(status.phase, "implementing");
+    assert.equal(taskState.tasks.T2, "in_progress");
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

@@ -3,6 +3,8 @@ export interface TaskContextInput {
   activePlanPath: string | null;
   activePlanExcerpt?: string | null;
   activeSpecExcerpt?: string | null;
+  lastVerificationExcerpt?: string | null;
+  lastTaskOutputExcerpt?: string | null;
   activeMilestoneId: string | null;
   activeTaskId: string | null;
   taskKind?: string | null;
@@ -35,6 +37,16 @@ export function buildExecutionPrompt(input: TaskContextInput): string {
   if (input.activePlanExcerpt) {
     lines.push("Plan excerpt:");
     lines.push(input.activePlanExcerpt);
+  }
+
+  if (input.lastVerificationExcerpt) {
+    lines.push("Last verification excerpt:");
+    lines.push(input.lastVerificationExcerpt);
+  }
+
+  if (input.lastTaskOutputExcerpt) {
+    lines.push("Previous task output excerpt:");
+    lines.push(input.lastTaskOutputExcerpt);
   }
 
   if (input.activeTaskId) {

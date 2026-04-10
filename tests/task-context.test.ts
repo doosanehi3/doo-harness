@@ -8,6 +8,8 @@ test("buildExecutionPrompt includes goal, plan, milestone, and task focus", () =
     activePlanPath: "/tmp/plan.md",
     activePlanExcerpt: "- [ ] Add RBAC middleware",
     activeSpecExcerpt: "Goal: support role-based access",
+    lastVerificationExcerpt: "Verification commands failed because tests still expect placeholder behavior.",
+    lastTaskOutputExcerpt: "# Task Output\nChanged Files:\n- src/app-cli.js",
     activeMilestoneId: "M2",
     activeTaskId: "T2",
     taskKind: "implementation",
@@ -28,6 +30,10 @@ test("buildExecutionPrompt includes goal, plan, milestone, and task focus", () =
   assert.match(prompt, /Current blocker: Implementation produced no concrete file changes outside \.harness\./);
   assert.match(prompt, /Spec excerpt:/);
   assert.match(prompt, /Plan excerpt:/);
+  assert.match(prompt, /Last verification excerpt:/);
+  assert.match(prompt, /tests still expect placeholder behavior/);
+  assert.match(prompt, /Previous task output excerpt:/);
+  assert.match(prompt, /Changed Files:/);
   assert.match(prompt, /Focus only on T2/);
   assert.match(prompt, /Existing scaffold files you should modify/);
   assert.match(prompt, /package\.json/);

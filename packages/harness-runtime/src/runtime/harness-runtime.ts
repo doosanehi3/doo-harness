@@ -705,6 +705,12 @@ export class HarnessRuntime {
       }
       if (taskStatus === "blocked") {
         if (this.isAutoRecoverableBlockedTask(taskId)) {
+          if (taskId && this.session.taskState.taskRecoveryHints[taskId] === "implementation_fix_required") {
+            return "Use /continue to return to implementation and fix the failing verification command.";
+          }
+          if (taskId && this.isLegacyImplementationVerificationRecovery(taskId)) {
+            return "Use /continue to return to implementation and fix the failing verification command.";
+          }
           return this.session.state.blocker?.includes("no concrete file changes")
             ? "Use /continue to retry implementation with the scaffold files and produce real code changes."
             : "Use /continue to regenerate task output and resume manual verification.";
@@ -763,6 +769,8 @@ export class HarnessRuntime {
       activePlanPath: this.session.state.activePlanPath,
       activePlanExcerpt: await this.readArtifactExcerpt(this.session.state.activePlanPath),
       activeSpecExcerpt: await this.readArtifactExcerpt(this.session.state.activeSpecPath),
+      lastVerificationExcerpt: await this.readArtifactExcerpt(this.session.state.lastVerificationPath, 500),
+      lastTaskOutputExcerpt: await this.readArtifactExcerpt(this.session.taskState.taskOutputs[taskId] ?? null, 500),
       activeMilestoneId: this.session.state.activeMilestoneId,
       activeTaskId: taskId,
       taskKind: this.session.taskState.taskKinds[taskId] ?? null,
@@ -810,7 +818,8 @@ export class HarnessRuntime {
 
     if (
       this.session.taskState.taskRecoveryHints[taskId] === "manual_output_required" ||
-      this.session.taskState.taskRecoveryHints[taskId] === "implementation_no_changes"
+      this.session.taskState.taskRecoveryHints[taskId] === "implementation_no_changes" ||
+      this.session.taskState.taskRecoveryHints[taskId] === "implementation_fix_required"
     ) {
       return true;
     }
@@ -824,11 +833,23 @@ export class HarnessRuntime {
       Boolean(blocker && blocker.includes("Manual verification requires task output:")) &&
       verifyCommands.some(command => command.startsWith("manual:")) &&
       !this.session.taskState.taskOutputs[taskId]
-    ) || Boolean(blocker && blocker.includes("Implementation produced no concrete file changes outside .harness."));
+    ) ||
+      Boolean(blocker && blocker.includes("Implementation produced no concrete file changes outside .harness.")) ||
+      this.isLegacyImplementationVerificationRecovery(taskId);
+  }
+
+  private isLegacyImplementationVerificationRecovery(taskId: string): boolean {
+    return (
+      (this.session.taskState.taskKinds[taskId] ?? null) === "implementation" &&
+      this.session.state.lastVerificationStatus === "fail" &&
+      this.session.taskState.tasks[taskId] === "blocked" &&
+      (this.session.taskState.taskVerificationCommands[taskId]?.length ?? 0) > 0
+    );
   }
 
   private async autoRecoverBlockedTask(taskId: string): Promise<string> {
     const hint = this.session.taskState.taskRecoveryHints[taskId] ?? null;
+    const legacyImplementationFix = this.isLegacyImplementationVerificationRecovery(taskId);
     const blocker =
       this.session.taskState.taskBlockers[taskId] ??
       (this.session.taskState.activeTaskId === taskId ? this.session.state.blocker : null);
@@ -848,6 +869,12 @@ export class HarnessRuntime {
     const continued = await this.continueTaskLoop();
     if (hint === "implementation_no_changes" || blocker?.includes("no concrete file changes")) {
       return `${taskId} was re-queued because the previous implementation made no concrete file changes. ${continued}`;
+    }
+    if (hint === "implementation_fix_required") {
+      return `${taskId} was re-queued because implementation verification failed and needs fixes. ${continued}`;
+    }
+    if (legacyImplementationFix) {
+      return `${taskId} was re-queued because implementation verification failed and needs fixes. ${continued}`;
     }
     return `${taskId} was re-queued because manual verification needed task output. ${continued}`;
   }
@@ -1059,6 +1086,95 @@ export class HarnessRuntime {
     return null;
   }
 
+  private buildPlanningArtifacts(input: string, longRunning: boolean): {
+    specContent: string;
+    planContent: string;
+    milestoneContent?: string;
+  } {
+    const cliName = this.inferNodeCliNameFromGoal(input);
+    const supportedCommands = this.inferSupportedCliCommands(input);
+
+    if (longRunning && cliName) {
+      const storageFile = `${cliName}.tasks.json`;
+      const commandSummary =
+        supportedCommands.length > 0 ? supportedCommands.join(", ") : "the required commands";
+      return {
+        specContent: `# Spec
+
+Goal: ${input}
+
+## Functional Requirements
+- Expose a Node.js CLI named \`${cliName}\`.
+- Persist task data in a local JSON file named \`${storageFile}\`.
+- Support ${commandSummary} commands.
+- Ship README usage examples and automated tests.
+
+## Constraints
+- No external runtime dependencies.
+- Keep implementation understandable enough for follow-up agent passes.
+
+## Success Criteria
+- The CLI supports the required commands against the local JSON store.
+- \`pnpm run test\` passes.
+- The README explains setup and command usage.`,
+        planContent: `# Plan
+
+- [ ] Define the CLI contract and persistence behavior | milestone=M1 | kind=analysis | owner=planner | expectedOutput=command contract note | verify=manual:review command contract
+- [ ] Implement the CLI commands, JSON persistence, README, and tests | milestone=M2 | kind=implementation | owner=worker | expectedOutput=working CLI, README, and tests | dependsOn=T1 | verify=pnpm run test
+- [ ] Verify the CLI behavior independently | milestone=M3 | kind=verification | owner=validator | expectedOutput=verification evidence | dependsOn=T2 | verify=pnpm run test`,
+        milestoneContent: `# Milestones
+
+- M1: Define CLI contract | kind=planning
+- M2: Implement commands and persistence | kind=implementation | dependsOn=M1
+- M3: Verify CLI behavior and handoff | kind=verification | dependsOn=M2`
+      };
+    }
+
+    return {
+      specContent: `# Spec
+
+Goal: ${input}
+
+## Constraints
+- Fill in concrete requirements
+
+## Success Criteria
+- Deliver a working outcome with verification evidence`,
+      planContent: `# Plan
+
+- [ ] Clarify edge cases | milestone=M1 | kind=analysis | owner=planner | expectedOutput=clarified requirements note | verify=manual:review requirements
+- [ ] Implement the required change | milestone=M2 | kind=implementation | owner=worker | expectedOutput=code changes | dependsOn=T1 | verify=pnpm run test
+- [ ] Verify behavior independently | milestone=M3 | kind=verification | owner=validator | expectedOutput=verification evidence | dependsOn=T2 | verify=pnpm run test`,
+      milestoneContent: longRunning
+        ? `# Milestones
+
+- M1: Scope and plan | kind=planning
+- M2: Implement core slice | kind=implementation | dependsOn=M1
+- M3: Verify and handoff | kind=verification | dependsOn=M2`
+        : undefined
+    };
+  }
+
+  private inferNodeCliNameFromGoal(goal: string): string | null {
+    const explicit = goal.match(/Node\.?js CLI called ([a-z0-9-]+)/i);
+    if (explicit?.[1]) {
+      return explicit[1].toLowerCase();
+    }
+    return null;
+  }
+
+  private inferSupportedCliCommands(goal: string): string[] {
+    const match = goal.match(/supports? (.+?) commands?/i);
+    if (!match?.[1]) {
+      return [];
+    }
+    return match[1]
+      .replace(/\band\b/gi, ",")
+      .split(",")
+      .map(item => item.trim())
+      .filter(Boolean);
+  }
+
   private reopenForNewWork(force = false): void {
     if (force || this.session.state.phase === "completed" || this.session.state.phase === "cancelled") {
       this.session.state.phase = "idle";
@@ -1100,30 +1216,23 @@ export class HarnessRuntime {
     this.session.state = transitionPhase(this.session.state, "planning");
     this.session.state.currentFlow = longRunning ? "milestone" : "disciplined_single";
     this.session.state.goalSummary = input;
+    const planning = this.buildPlanningArtifacts(input, longRunning);
 
     const spec = await this.artifactStore.write(
       "spec",
-      `# Spec\n\nGoal: ${input}\n\n## Constraints\n- Fill in concrete requirements\n\n## Success Criteria\n- Deliver a working outcome with verification evidence`,
+      planning.specContent,
       this.session.sessionId
     );
       const plan = await this.artifactStore.write(
         "plan",
-        `# Plan
-
-- [ ] Clarify edge cases | milestone=M1 | kind=analysis | owner=planner | expectedOutput=clarified requirements note | verify=manual:review requirements
-- [ ] Implement the required change | milestone=M2 | kind=implementation | owner=worker | expectedOutput=code changes | dependsOn=T1 | verify=pnpm run test
-- [ ] Verify behavior independently | milestone=M3 | kind=verification | owner=validator | expectedOutput=verification evidence | dependsOn=T2 | verify=pnpm run test`,
+        planning.planContent,
         this.session.sessionId
       );
 
     this.session.state.activeSpecPath = spec.path;
     this.session.state.activePlanPath = plan.path;
 
-      const parsedTasks = parsePlanTasks(`# Plan
-
-- [ ] Clarify edge cases | milestone=M1 | kind=analysis | owner=planner | expectedOutput=clarified requirements note | verify=manual:review requirements
-- [ ] Implement the required change | milestone=M2 | kind=implementation | owner=worker | expectedOutput=code changes | dependsOn=T1 | verify=pnpm run test
-- [ ] Verify behavior independently | milestone=M3 | kind=verification | owner=validator | expectedOutput=verification evidence | dependsOn=T2 | verify=pnpm run test`);
+      const parsedTasks = parsePlanTasks(planning.planContent);
       const initialTaskId = parsedTasks[0]?.id ?? "T1";
       for (const task of parsedTasks) {
         this.session.taskState.tasks[task.id] = task.checked ? "done" : "todo";
@@ -1151,12 +1260,8 @@ export class HarnessRuntime {
       this.session.taskState.activeTaskId = initialTaskId;
 
       let milestonePath: string | undefined;
-      if (longRunning) {
-        const milestoneContent = `# Milestones
-
-- M1: Scope and plan | kind=planning
-- M2: Implement core slice | kind=implementation | dependsOn=M1
-- M3: Verify and handoff | kind=verification | dependsOn=M2`;
+      if (longRunning && planning.milestoneContent) {
+        const milestoneContent = planning.milestoneContent;
         const milestones = await this.artifactStore.write(
           "milestones",
           milestoneContent,
@@ -1286,6 +1391,10 @@ export class HarnessRuntime {
         commandChecks.length > 0 ? commandChecks.every(check => check.passed) : null;
       const failedCommandDetails = commandChecks.filter(check => !check.passed).map(check => `${check.command}: ${check.detail}`);
       const commandFailureText = failedCommandDetails.length > 0 ? failedCommandDetails.join("\n") : null;
+      const activeTaskId = this.session.state.activeTaskId;
+      const activeTaskKind = activeTaskId ? this.session.taskState.taskKinds[activeTaskId] ?? null : null;
+      const implementationVerificationFailed =
+        activeTaskId !== null && activeTaskKind === "implementation" && allCommandsPassed === false;
 
       const result: VerificationResult = {
           status: this.session.state.activeTaskId
@@ -1358,9 +1467,11 @@ export class HarnessRuntime {
         recoveryHint:
           commandChecks.some(
             check => check.command.startsWith("manual:") && check.passed === false
-          ) && this.session.state.activeTaskId && !this.session.taskState.taskOutputs[this.session.state.activeTaskId]
+          ) && activeTaskId && !this.session.taskState.taskOutputs[activeTaskId]
             ? "manual_output_required"
-            : null,
+            : implementationVerificationFailed
+              ? "implementation_fix_required"
+              : null,
         suggestedNextStep: this.session.state.activeTaskId
           ? this.session.taskState.taskVerificationCommands[this.session.state.activeTaskId]
             ? allCommandsPassed === false

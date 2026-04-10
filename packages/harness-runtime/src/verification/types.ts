@@ -1,5 +1,5 @@
 export type VerificationStatus = "pass" | "fail" | "partial" | "blocked";
-export type RecoveryHint = "manual_output_required" | "implementation_no_changes";
+export type RecoveryHint = "manual_output_required" | "implementation_no_changes" | "implementation_fix_required";
 
 export interface VerificationCheck {
   kind: "runtime" | "command" | "manual";
