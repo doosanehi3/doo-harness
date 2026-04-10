@@ -91,6 +91,15 @@ long-running runtime layer:
 
 That is the gap a thicker overlay or dedicated runtime layer must fill.
 
+The current direction of this harness is explicitly aimed at that ownership:
+
+- state ownership
+- verification ownership
+- recovery ownership
+
+In other words, the goal is not to add more workflow commands on top of pi, but
+to ensure that the overlay layer actually controls long-running semantics.
+
 ## Long-Term Direction
 
 Long term, the likely shape is:
