@@ -146,6 +146,19 @@ It is:
 An independent runtime was one way to get that ownership early. A sufficiently
 thick overlay on top of `pi-coding-agent` can also implement it.
 
+## Why Workflow-First Is Still Attractive
+
+Handling long-running concerns at the workflow layer has real advantages:
+
+- lower implementation complexity
+- faster product polish through reuse of `pi-coding-agent`
+- less duplicated work in auth, session, provider, and UX layers
+- easier upstream alignment as `pi-coding-agent` evolves
+
+The trade-off is that workflow-first solutions can leave long-running semantics
+too implicit unless the overlay also owns real state, verification, and
+recovery behavior.
+
 ## Migration Principle
 
 When deciding whether a capability belongs in the harness or in pi:
