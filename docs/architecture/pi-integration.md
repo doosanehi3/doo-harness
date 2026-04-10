@@ -130,6 +130,17 @@ This also means a `roach-pi`-style approach can work, but only if the overlay is
 thick enough to own real runtime semantics instead of acting as prompt-only
 workflow decoration.
 
+So the important distinction is not:
+
+- independent runtime versus pi substrate
+
+It is:
+
+- no runtime ownership versus real runtime ownership
+
+An independent runtime was one way to get that ownership early. A sufficiently
+thick overlay on top of `pi-coding-agent` can also implement it.
+
 ## Migration Principle
 
 When deciding whether a capability belongs in the harness or in pi:
