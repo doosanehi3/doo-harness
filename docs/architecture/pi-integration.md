@@ -92,6 +92,10 @@ It is:
 
 - "rehost the harness runtime on a stronger pi-based substrate"
 
+This also means a `roach-pi`-style approach can work, but only if the overlay is
+thick enough to own real runtime semantics instead of acting as prompt-only
+workflow decoration.
+
 ## Migration Principle
 
 When deciding whether a capability belongs in the harness or in pi:
