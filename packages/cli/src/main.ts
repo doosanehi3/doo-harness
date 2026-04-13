@@ -22,6 +22,7 @@ import { runStatus } from "./commands/handlers/status.js";
 import { runTaskDone } from "./commands/handlers/task-done.js";
 import { runUnblock } from "./commands/handlers/unblock.js";
 import { runVerify } from "./commands/handlers/verify.js";
+import { runWebSmoke } from "./commands/handlers/web-smoke.js";
 import { renderRuntimePanel } from "../../tui/src/index.js";
 
 function parseCliInvocation(argv: string[]): { runtimeCwd: string; input: string } {
@@ -131,6 +132,13 @@ function normalizeCliInput(args: string[]): string {
       }
       return trimmedArgs.join(" ").trim();
     }
+    case "web": {
+      const [action] = payload;
+      if (action === "smoke") {
+        return json ? "/web-smoke-json" : "/web-smoke";
+      }
+      return trimmedArgs.join(" ").trim();
+    }
     default:
       return trimmedArgs.join(" ").trim();
   }
@@ -207,6 +215,14 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
     const target =
       role === "planner" || role === "worker" || role === "validator" ? role : "default";
     return runProviderSmoke(await runtime.smokeProvider(target));
+  }
+
+  if (trimmed === "/web-smoke") {
+    return runWebSmoke(await runtime.smokeWebApp());
+  }
+
+  if (trimmed === "/web-smoke-json") {
+    return JSON.stringify(await runtime.smokeWebApp(), null, 2);
   }
 
   if (trimmed === "/advance") {
@@ -411,6 +427,7 @@ export async function main(): Promise<void> {
     input === "/provider-check-json" ||
     input === "/provider-doctor-json" ||
     input.startsWith("/provider-smoke-json") ||
+    input === "/web-smoke-json" ||
     input === "/artifacts-json" ||
     input === "/advance-json" ||
     input === "/continue-json" ||

@@ -1,5 +1,6 @@
 import { join, relative } from "node:path";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { Agent, createBashTool, createDefaultCodingTools } from "@doo/harness-agent-core";
 import { complete, createModel, getModelAuthReadiness, type Message, type Model } from "@doo/harness-ai";
 import type { ArtifactMeta } from "../artifacts/types.js";
@@ -136,6 +137,16 @@ export interface ProviderDoctorResult {
   role: "default" | "planner" | "worker" | "validator";
   readiness: ProviderRoleReadiness;
   smoke?: ProviderSmokeResult;
+}
+
+export interface WebSmokeResult {
+  success: boolean;
+  url: string;
+  statusCode: number | null;
+  title: string | null;
+  bodySnippet: string;
+  durationMs: number;
+  errorMessage?: string;
 }
 
 export class HarnessRuntime {
@@ -946,6 +957,103 @@ export class HarnessRuntime {
     }
 
     return results;
+  }
+
+  async smokeWebApp(): Promise<WebSmokeResult> {
+    const startedAt = Date.now();
+    const packageJsonPath = join(this.session.cwd, "package.json");
+    let packageJson: { scripts?: Record<string, string> } | null = null;
+
+    try {
+      packageJson = JSON.parse(await readFile(packageJsonPath, "utf8")) as { scripts?: Record<string, string> };
+    } catch {
+      return {
+        success: false,
+        url: "-",
+        statusCode: null,
+        title: null,
+        bodySnippet: "",
+        durationMs: Date.now() - startedAt,
+        errorMessage: "No package.json found for web smoke."
+      };
+    }
+
+    if (!packageJson.scripts?.start) {
+      return {
+        success: false,
+        url: "-",
+        statusCode: null,
+        title: null,
+        bodySnippet: "",
+        durationMs: Date.now() - startedAt,
+        errorMessage: 'No "start" script found in package.json.'
+      };
+    }
+
+    const port = 4300 + Math.floor(Math.random() * 400);
+    const url = `http://127.0.0.1:${port}`;
+    const child = spawn("pnpm", ["run", "start", "--", "--host", "127.0.0.1", "--port", String(port)], {
+      cwd: this.session.cwd,
+      env: {
+        ...process.env,
+        PORT: String(port)
+      },
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let output = "";
+    child.stdout.on("data", chunk => {
+      output += String(chunk);
+    });
+    child.stderr.on("data", chunk => {
+      output += String(chunk);
+    });
+
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+    try {
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        if (child.exitCode !== null && child.exitCode !== 0) {
+          return {
+            success: false,
+            url,
+            statusCode: null,
+            title: null,
+            bodySnippet: output.trim(),
+            durationMs: Date.now() - startedAt,
+            errorMessage: `Web app exited early with code ${child.exitCode}.`
+          };
+        }
+
+        try {
+          const response = await fetch(`${url}/`);
+          const body = await response.text();
+          const titleMatch = body.match(/<title>([^<]+)<\/title>/i);
+          const bodySnippet = body.replace(/\s+/g, " ").trim().slice(0, 200);
+          return {
+            success: response.ok,
+            url,
+            statusCode: response.status,
+            title: titleMatch?.[1] ?? null,
+            bodySnippet,
+            durationMs: Date.now() - startedAt
+          };
+        } catch {
+          await sleep(250);
+        }
+      }
+
+      return {
+        success: false,
+        url,
+        statusCode: null,
+        title: null,
+        bodySnippet: output.trim(),
+        durationMs: Date.now() - startedAt,
+        errorMessage: "Timed out waiting for web app to become reachable."
+      };
+    } finally {
+      child.kill("SIGTERM");
+    }
   }
 
   async listArtifacts(): Promise<ArtifactMeta[]> {

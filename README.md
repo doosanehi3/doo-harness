@@ -140,6 +140,7 @@ If you want machine-readable automation surfaces instead of text output:
 ```bash
 HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- status --json
 HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- provider doctor --json
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- web smoke --json
 HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- loop --json 10
 ```
 
@@ -189,6 +190,7 @@ Primary commands:
 - `provider check [--json]`
 - `provider doctor [--json]`
 - `provider smoke [--json] [role]`
+- `web smoke [--json]`
 - `config show`
 - `config init`
 - `config init --force`
@@ -201,6 +203,7 @@ Primary commands:
 3. Start work with `plan` or `longrun`.
 4. Drive execution with `continue`, `status`, `review`, `handoff`, and `reset` as needed.
 5. Use `provider smoke` if you need to confirm the active model/provider path before bigger work.
+6. Use `web smoke` when the target repo exposes a `start` script and you want a quick runtime check of the generated app.
 
 ## Current Limitations
 

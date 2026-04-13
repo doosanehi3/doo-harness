@@ -348,6 +348,53 @@ test("provider-doctor-json returns readiness plus smoke results", async () => {
   }
 });
 
+test("web-smoke-json returns machine-readable web smoke result", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-web-smoke-"));
+  try {
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(
+      join(cwd, "package.json"),
+      JSON.stringify(
+        {
+          name: "web-smoke-demo",
+          private: true,
+          type: "module",
+          scripts: {
+            start: "node server.js"
+          }
+        },
+        null,
+        2
+      ) + "\n",
+      "utf8"
+    );
+    await writeFile(
+      join(cwd, "server.js"),
+      `import { createServer } from "node:http";\nconst port = Number.parseInt(process.env.PORT ?? "4180", 10);\ncreateServer((_, res) => {\n  res.setHeader("content-type", "text/html; charset=utf-8");\n  res.end('<!doctype html><title>Web Smoke Demo</title><main><h1>Catalog preview</h1></main>');\n}).listen(port, "127.0.0.1", () => {\n  console.log('Catalog app ready at http://127.0.0.1:' + port);\n});\n`,
+      "utf8"
+    );
+
+    const output = await runCli(cwd, "/web-smoke-json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      success: boolean;
+      url: string;
+      statusCode: number;
+      title: string;
+      bodySnippet: string;
+      durationMs: number;
+    };
+
+    assert.equal(parsed.success, true);
+    assert.equal(parsed.statusCode, 200);
+    assert.equal(parsed.title, "Web Smoke Demo");
+    assert.match(parsed.url, /127\.0\.0\.1:/);
+    assert.match(parsed.bodySnippet, /Catalog preview/);
+    assert.ok(parsed.durationMs >= 0);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("bin entry can execute help-json", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-bin-"));
   try {
@@ -456,6 +503,45 @@ test("bin entry supports product-style provider smoke --json subcommands", async
   } finally {
     delete process.env.OPENAI_API_KEY;
     server.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("bin entry supports product-style web smoke --json subcommands", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-bin-web-smoke-subcmd-"));
+  try {
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(
+      join(cwd, "package.json"),
+      JSON.stringify(
+        {
+          name: "web-smoke-demo",
+          private: true,
+          type: "module",
+          scripts: {
+            start: "node server.js"
+          }
+        },
+        null,
+        2
+      ) + "\n",
+      "utf8"
+    );
+    await writeFile(
+      join(cwd, "server.js"),
+      `import { createServer } from "node:http";\nconst port = Number.parseInt(process.env.PORT ?? "4180", 10);\ncreateServer((_, res) => {\n  res.setHeader("content-type", "text/html; charset=utf-8");\n  res.end('<!doctype html><title>Web Smoke Demo</title><main><h1>Catalog preview</h1></main>');\n}).listen(port, "127.0.0.1", () => {\n  console.log('Catalog app ready at http://127.0.0.1:' + port);\n});\n`,
+      "utf8"
+    );
+
+    const output = await runBinWithArgs("--cwd", cwd, "web", "smoke", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      success: boolean;
+      title: string;
+    };
+
+    assert.equal(parsed.success, true);
+    assert.equal(parsed.title, "Web Smoke Demo");
+  } finally {
     await rm(cwd, { recursive: true, force: true });
   }
 });
