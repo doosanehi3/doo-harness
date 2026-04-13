@@ -1468,6 +1468,8 @@ export class HarnessRuntime {
       .map(command =>
         command.startsWith("manual:")
           ? `manual review (${command.slice("manual:".length).trim() || "manual check"})`
+          : command === "runtime:web-smoke"
+            ? "runtime web smoke"
           : `\`${command}\``
       )
       .join(", ");
@@ -1773,7 +1775,7 @@ Goal: ${input}
         planContent: `# Plan
 
 - [ ] Define the catalog IA, routes, and interaction contract | milestone=M1 | kind=analysis | owner=planner | expectedOutput=catalog interaction contract note | verify=manual:review catalog contract
-- [ ] Implement the catalog shell, filters, detail view, and CTA flow | milestone=M2 | kind=implementation | owner=worker | expectedOutput=working catalog shell, filters, detail view, and CTA | dependsOn=T1 | verify=pnpm run test
+- [ ] Implement the catalog shell, filters, detail view, and CTA flow | milestone=M2 | kind=implementation | owner=worker | expectedOutput=working catalog shell, filters, detail view, and CTA | dependsOn=T1 | verify=pnpm run test ;; runtime:web-smoke
 - [ ] Verify the catalog interactions independently | milestone=M3 | kind=verification | owner=validator | expectedOutput=verification evidence | dependsOn=T2 | verify=pnpm run test`,
         milestoneContent: `# Milestones
 
@@ -2059,6 +2061,17 @@ Goal: ${input}
                     detail: passed
                       ? `Manual verification satisfied: ${detail}`
                       : `Manual verification requires task output: ${detail}`
+                  };
+                }
+
+                if (command === "runtime:web-smoke") {
+                  const smoke = await this.smokeWebApp();
+                  return {
+                    command,
+                    passed: smoke.success,
+                    detail: smoke.success
+                      ? `Web smoke passed at ${smoke.url} (${smoke.title ?? "no title"})`
+                      : smoke.errorMessage ?? "Web smoke failed"
                   };
                 }
 

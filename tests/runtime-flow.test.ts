@@ -346,7 +346,7 @@ test("catalog webapp longrun planning writes a concrete spec and plan for blank-
     assert.equal(status.activeTaskText, "Define the catalog IA, routes, and interaction contract");
     assert.equal(taskState.taskExpectedOutputs.T1, "catalog interaction contract note");
     assert.equal(taskState.taskExpectedOutputs.T2, "working catalog shell, filters, detail view, and CTA");
-    assert.deepEqual(taskState.taskVerificationCommands.T2, ["pnpm run test"]);
+    assert.deepEqual(taskState.taskVerificationCommands.T2, ["pnpm run test", "runtime:web-smoke"]);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -699,6 +699,50 @@ test("verify uses task verifyCommand for self-check flow", async () => {
     assert.ok(taskState.taskBlockers.T1);
     assert.equal(taskState.taskRecoveryHints.T1, undefined);
     assert.match(status.nextAction, /use \/unblock and rerun/i);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("verify can use runtime:web-smoke for self-check flow", async () => {
+  const cwd = await createTempHarnessDir();
+  try {
+    await writeFile(
+      join(cwd, "package.json"),
+      JSON.stringify(
+        {
+          name: "web-smoke-verify-demo",
+          private: true,
+          type: "module",
+          scripts: {
+            start: "node server.js"
+          }
+        },
+        null,
+        2
+      ) + "\n",
+      "utf8"
+    );
+    await writeFile(
+      join(cwd, "server.js"),
+      `import { createServer } from "node:http";\nconst port = Number.parseInt(process.env.PORT ?? "4180", 10);\ncreateServer((_, res) => {\n  res.setHeader("content-type", "text/html; charset=utf-8");\n  res.end('<!doctype html><title>Web Smoke Demo</title><main><h1>Catalog preview</h1></main>');\n}).listen(port, "127.0.0.1");\n`,
+      "utf8"
+    );
+
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("Web smoke verify demo", true);
+    const taskState = runtime.getTaskStateSnapshot();
+    taskState.taskVerificationCommands.T1 = ["runtime:web-smoke"];
+    await saveTaskState(join(cwd, ".harness", "artifacts", "task-state.json"), taskState);
+
+    const refreshed = await HarnessRuntime.create(cwd);
+    await refreshed.executeCurrentTask();
+    const verification = await refreshed.verify();
+    const status = refreshed.getStatus();
+
+    assert.equal(verification.result.status, "pass");
+    assert.ok(verification.result.evidence.some(item => item.includes("runtime:web-smoke")));
+    assert.equal(status.phase, "reviewing");
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
