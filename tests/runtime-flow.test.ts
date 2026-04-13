@@ -364,12 +364,14 @@ test("react vite catalog webapp longrun planning writes a framework-aware spec a
     const specBody = await readFile(join(cwd, ".harness", "artifacts", "spec.md"), "utf8");
     const planBody = await readFile(join(cwd, ".harness", "artifacts", "plan.md"), "utf8");
     const status = runtime.getStatus();
+    const taskState = runtime.getTaskStateSnapshot();
 
     assert.match(specBody, /React/);
     assert.match(specBody, /Vite/);
     assert.match(planBody, /Define the React routes, component state, and interaction contract/);
     assert.match(planBody, /Implement the Vite app shell, catalog interactions, and CTA flow/);
     assert.equal(status.activeTaskText, "Define the React routes, component state, and interaction contract");
+    assert.deepEqual(taskState.taskVerificationCommands.T2, ["pnpm run test", "runtime:web-smoke"]);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -387,11 +389,13 @@ test("nextjs catalog webapp longrun planning writes a framework-aware spec and p
     const specBody = await readFile(join(cwd, ".harness", "artifacts", "spec.md"), "utf8");
     const planBody = await readFile(join(cwd, ".harness", "artifacts", "plan.md"), "utf8");
     const status = runtime.getStatus();
+    const taskState = runtime.getTaskStateSnapshot();
 
     assert.match(specBody, /Next\.js/);
     assert.match(planBody, /Define the Next.js routes, server-client boundaries, and interaction contract/);
     assert.match(planBody, /Implement the Next.js app shell, catalog interactions, and CTA flow/);
     assert.equal(status.activeTaskText, "Define the Next.js routes, server-client boundaries, and interaction contract");
+    assert.deepEqual(taskState.taskVerificationCommands.T2, ["pnpm run test", "runtime:web-smoke"]);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

@@ -1086,9 +1086,59 @@ export class HarnessRuntime {
       };
     }
 
+    const startScript = packageJson.scripts.start;
+    const deps = {
+      ...(packageJson as { dependencies?: Record<string, string> }).dependencies,
+      ...(packageJson as { devDependencies?: Record<string, string> }).devDependencies
+    };
+    const needsFrameworkInstall =
+      Boolean(startScript.includes("vite") || startScript.includes("next")) ||
+      Boolean(deps.next || deps.vite || deps.react || deps["react-dom"]);
+    const nodeModulesPath = join(this.session.cwd, "node_modules");
+    const hasNodeModules = await stat(nodeModulesPath).then(() => true).catch(() => false);
+
+    if (needsFrameworkInstall && !hasNodeModules) {
+      const install = spawn("pnpm", ["install"], {
+        cwd: this.session.cwd,
+        env: {
+          ...process.env
+        },
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+      let installOutput = "";
+      install.stdout.on("data", chunk => {
+        installOutput += String(chunk);
+      });
+      install.stderr.on("data", chunk => {
+        installOutput += String(chunk);
+      });
+      const exitCode = await new Promise<number | null>((resolve, reject) => {
+        install.once("error", reject);
+        install.once("exit", code => resolve(code));
+      }).catch(() => null);
+
+      if (exitCode !== 0) {
+        return {
+          success: false,
+          url: "-",
+          statusCode: null,
+          title: null,
+          bodySnippet: installOutput.trim().slice(0, 200),
+          durationMs: Date.now() - startedAt,
+          errorMessage: `Dependency install failed before web smoke (exit ${exitCode ?? "unknown"}).`
+        };
+      }
+    }
+
     const port = 4300 + Math.floor(Math.random() * 400);
-    const url = `http://127.0.0.1:${port}`;
-    const child = spawn("pnpm", ["run", "start", "--", "--host", "127.0.0.1", "--port", String(port)], {
+    let url = `http://127.0.0.1:${port}`;
+    const startCommand =
+      deps.vite && startScript.includes("vite")
+        ? ["exec", "vite", "--host", "127.0.0.1", "--port", String(port)]
+        : deps.next && startScript.includes("next")
+          ? ["exec", "next", "dev", "--hostname", "127.0.0.1", "--port", String(port)]
+          : ["run", "start"];
+    const child = spawn("pnpm", startCommand, {
       cwd: this.session.cwd,
       env: {
         ...process.env,
@@ -1098,16 +1148,26 @@ export class HarnessRuntime {
     });
     let output = "";
     child.stdout.on("data", chunk => {
-      output += String(chunk);
+      const text = String(chunk);
+      output += text;
+      const announced = text.match(/https?:\/\/(?:127\.0\.0\.1|localhost):\d+/);
+      if (announced?.[0]) {
+        url = announced[0].replace("localhost", "127.0.0.1");
+      }
     });
     child.stderr.on("data", chunk => {
-      output += String(chunk);
+      const text = String(chunk);
+      output += text;
+      const announced = text.match(/https?:\/\/(?:127\.0\.0\.1|localhost):\d+/);
+      if (announced?.[0]) {
+        url = announced[0].replace("localhost", "127.0.0.1");
+      }
     });
 
     const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
     try {
-      for (let attempt = 0; attempt < 40; attempt += 1) {
+      for (let attempt = 0; attempt < 120; attempt += 1) {
         if (child.exitCode !== null && child.exitCode !== 0) {
           return {
             success: false,
@@ -1701,7 +1761,7 @@ Goal: ${input}
         planContent: `# Plan
 
 - [ ] Define the Next.js routes, server-client boundaries, and interaction contract | milestone=M1 | kind=analysis | owner=planner | expectedOutput=Next.js catalog interaction contract note | verify=manual:review catalog contract
-- [ ] Implement the Next.js app shell, catalog interactions, and CTA flow | milestone=M2 | kind=implementation | owner=worker | expectedOutput=working Next.js catalog app shell and interaction flow | dependsOn=T1 | verify=pnpm run test
+- [ ] Implement the Next.js app shell, catalog interactions, and CTA flow | milestone=M2 | kind=implementation | owner=worker | expectedOutput=working Next.js catalog app shell and interaction flow | dependsOn=T1 | verify=pnpm run test ;; runtime:web-smoke
 - [ ] Verify the Next.js catalog interactions independently | milestone=M3 | kind=verification | owner=validator | expectedOutput=verification evidence | dependsOn=T2 | verify=pnpm run test`,
         milestoneContent: `# Milestones
 
@@ -1735,7 +1795,7 @@ Goal: ${input}
         planContent: `# Plan
 
 - [ ] Define the React routes, component state, and interaction contract | milestone=M1 | kind=analysis | owner=planner | expectedOutput=React catalog interaction contract note | verify=manual:review catalog contract
-- [ ] Implement the Vite app shell, catalog interactions, and CTA flow | milestone=M2 | kind=implementation | owner=worker | expectedOutput=working React catalog app shell and interaction flow | dependsOn=T1 | verify=pnpm run test
+- [ ] Implement the Vite app shell, catalog interactions, and CTA flow | milestone=M2 | kind=implementation | owner=worker | expectedOutput=working React catalog app shell and interaction flow | dependsOn=T1 | verify=pnpm run test ;; runtime:web-smoke
 - [ ] Verify the React catalog interactions independently | milestone=M3 | kind=verification | owner=validator | expectedOutput=verification evidence | dependsOn=T2 | verify=pnpm run test`,
         milestoneContent: `# Milestones
 
