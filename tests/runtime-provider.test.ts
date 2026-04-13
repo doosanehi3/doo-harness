@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { AddressInfo } from "node:net";
 import { once } from "node:events";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -414,6 +414,8 @@ test("blank catalog webapp repos get a runnable promotional catalog bootstrap", 
     const appBody = await readFile(join(cwd, "src", "app.js"), "utf8");
     const catalogBody = await readFile(join(cwd, "src", "catalog.js"), "utf8");
     const inquiryBody = await readFile(join(cwd, "src", "inquiry.js"), "utf8");
+    const packageBody = await readFile(join(cwd, "package.json"), "utf8");
+    const serverBody = await readFile(join(cwd, "scripts", "serve-static.js"), "utf8");
     const testBody = await readFile(join(cwd, "tests", "catalog.test.js"), "utf8");
     await execFileAsync("pnpm", ["run", "test"], {
       cwd,
@@ -425,6 +427,7 @@ test("blank catalog webapp repos get a runnable promotional catalog bootstrap", 
     assert.equal(taskId, "T2");
     assert.match(note, /index\.html/);
     assert.match(note, /src\/app\.js/);
+    assert.match(htmlBody, /rel="icon" href="data:,"/);
     assert.match(htmlBody, /catalog-grid/);
     assert.match(htmlBody, /product-detail/);
     assert.match(appBody, /renderCatalog/);
@@ -435,8 +438,48 @@ test("blank catalog webapp repos get a runnable promotional catalog bootstrap", 
     assert.match(catalogBody, /filtersToQuery/);
     assert.match(catalogBody, /queryToFilters/);
     assert.match(inquiryBody, /submitInquiryLead/);
+    assert.match(packageBody, /"start": "node scripts\/serve-static\.js"/);
+    assert.match(serverBody, /Catalog app ready at/);
     assert.match(testBody, /filtersToQuery/);
     assert.match(testBody, /submitInquiryLead/);
+
+    const child = spawn("pnpm", ["run", "start"], {
+      cwd,
+      env: {
+        ...process.env,
+        PORT: "4179"
+      },
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("server did not start in time")), 5000);
+        child.stdout.on("data", chunk => {
+          if (String(chunk).includes("http://127.0.0.1:4179")) {
+            clearTimeout(timer);
+            resolve();
+          }
+        });
+        child.once("error", error => {
+          clearTimeout(timer);
+          reject(error);
+        });
+        child.once("exit", code => {
+          clearTimeout(timer);
+          if (code !== 0) {
+            reject(new Error(`server exited early with code ${code ?? -1}`));
+          }
+        });
+      });
+
+      const response = await fetch("http://127.0.0.1:4179/");
+      const body = await response.text();
+      assert.equal(response.status, 200);
+      assert.match(body, /catalog-grid/);
+    } finally {
+      child.kill("SIGTERM");
+    }
   } finally {
     server.close();
     await rm(cwd, { recursive: true, force: true });
@@ -500,6 +543,7 @@ test("blank react vite catalog webapp repos get a framework-aware bootstrap", as
     });
 
     assert.equal(taskId, "T2");
+    assert.match(await readFile(join(cwd, "index.html"), "utf8"), /rel="icon" href="data:,"/);
     assert.match(packageBody, /"vite"/);
     assert.match(packageBody, /"react"/);
     assert.match(mainBody, /ReactDOM/);
