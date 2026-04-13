@@ -375,6 +375,28 @@ test("react vite catalog webapp longrun planning writes a framework-aware spec a
   }
 });
 
+test("nextjs catalog webapp longrun planning writes a framework-aware spec and plan", async () => {
+  const cwd = await createTempHarnessDir();
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan(
+      "Build a Next.js interactive clothing product promotional catalog webapp with a branded landing page, catalog listing, category/tag/season filters, product detail pages, related products, inquiry/interest CTA, URL-backed filter state, responsive layout, mock data, tests, and a README. Exclude cart, checkout, login, admin, and CMS.",
+      true
+    );
+
+    const specBody = await readFile(join(cwd, ".harness", "artifacts", "spec.md"), "utf8");
+    const planBody = await readFile(join(cwd, ".harness", "artifacts", "plan.md"), "utf8");
+    const status = runtime.getStatus();
+
+    assert.match(specBody, /Next\.js/);
+    assert.match(planBody, /Define the Next.js routes, server-client boundaries, and interaction contract/);
+    assert.match(planBody, /Implement the Next.js app shell, catalog interactions, and CTA flow/);
+    assert.equal(status.activeTaskText, "Define the Next.js routes, server-client boundaries, and interaction contract");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("blockCurrentTask pauses the runtime and records blocker", async () => {
   const cwd = await createTempHarnessDir();
   try {
