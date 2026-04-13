@@ -413,6 +413,7 @@ test("blank catalog webapp repos get a runnable promotional catalog bootstrap", 
     const htmlBody = await readFile(join(cwd, "index.html"), "utf8");
     const appBody = await readFile(join(cwd, "src", "app.js"), "utf8");
     const catalogBody = await readFile(join(cwd, "src", "catalog.js"), "utf8");
+    const inquiryBody = await readFile(join(cwd, "src", "inquiry.js"), "utf8");
     const testBody = await readFile(join(cwd, "tests", "catalog.test.js"), "utf8");
     await execFileAsync("pnpm", ["run", "test"], {
       cwd,
@@ -427,10 +428,15 @@ test("blank catalog webapp repos get a runnable promotional catalog bootstrap", 
     assert.match(htmlBody, /catalog-grid/);
     assert.match(htmlBody, /product-detail/);
     assert.match(appBody, /renderCatalog/);
+    assert.match(appBody, /filtersToQuery/);
+    assert.match(appBody, /submitInquiryLead/);
     assert.match(catalogBody, /filterProducts/);
     assert.match(catalogBody, /getProductBySlug/);
-    assert.match(testBody, /filterProducts/);
-    assert.match(testBody, /getProductBySlug/);
+    assert.match(catalogBody, /filtersToQuery/);
+    assert.match(catalogBody, /queryToFilters/);
+    assert.match(inquiryBody, /submitInquiryLead/);
+    assert.match(testBody, /filtersToQuery/);
+    assert.match(testBody, /submitInquiryLead/);
   } finally {
     server.close();
     await rm(cwd, { recursive: true, force: true });
