@@ -23,6 +23,7 @@ import { runTaskDone } from "./commands/handlers/task-done.js";
 import { runUnblock } from "./commands/handlers/unblock.js";
 import { runVerify } from "./commands/handlers/verify.js";
 import { runWebSmoke } from "./commands/handlers/web-smoke.js";
+import { runWebVerify } from "./commands/handlers/web-verify.js";
 import { renderRuntimePanel } from "../../tui/src/index.js";
 
 function parseCliInvocation(argv: string[]): { runtimeCwd: string; input: string } {
@@ -137,6 +138,9 @@ function normalizeCliInput(args: string[]): string {
       if (action === "smoke") {
         return json ? "/web-smoke-json" : "/web-smoke";
       }
+      if (action === "verify") {
+        return json ? "/web-verify-json" : "/web-verify";
+      }
       return trimmedArgs.join(" ").trim();
     }
     default:
@@ -223,6 +227,14 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
 
   if (trimmed === "/web-smoke-json") {
     return JSON.stringify(await runtime.smokeWebApp(), null, 2);
+  }
+
+  if (trimmed === "/web-verify") {
+    return runWebVerify(await runtime.verifyWebApp());
+  }
+
+  if (trimmed === "/web-verify-json") {
+    return JSON.stringify(await runtime.verifyWebApp(), null, 2);
   }
 
   if (trimmed === "/advance") {
@@ -428,6 +440,7 @@ export async function main(): Promise<void> {
     input === "/provider-doctor-json" ||
     input.startsWith("/provider-smoke-json") ||
     input === "/web-smoke-json" ||
+    input === "/web-verify-json" ||
     input === "/artifacts-json" ||
     input === "/advance-json" ||
     input === "/continue-json" ||

@@ -55,11 +55,11 @@ export function buildHelpPayload(): HelpPayload {
       },
       {
         title: "Web",
-        commands: ["harness web smoke [--json]"]
+        commands: ["harness web smoke [--json]", "harness web verify [--json]"]
       },
       {
         title: "Compatibility",
-        commands: ["/status", "/plan", "/longrun", "/continue", "/provider-check", "/provider-smoke", "/provider-doctor", "/web-smoke"]
+        commands: ["/status", "/plan", "/longrun", "/continue", "/provider-check", "/provider-smoke", "/provider-doctor", "/web-smoke", "/web-verify"]
       }
     ]
   };

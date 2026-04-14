@@ -397,6 +397,47 @@ test("web-smoke-json returns machine-readable web smoke result", async () => {
   }
 });
 
+test("web-verify-json returns machine-readable web verification result", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-web-verify-"));
+  try {
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(
+      join(cwd, "package.json"),
+      JSON.stringify(
+        {
+          name: "web-verify-demo",
+          private: true,
+          type: "module",
+          scripts: {
+            start: "node server.js"
+          }
+        },
+        null,
+        2
+      ) + "\n",
+      "utf8"
+    );
+    await writeFile(
+      join(cwd, "server.js"),
+      `import { createServer } from "node:http";\nconst port = Number.parseInt(process.env.PORT ?? "4180", 10);\ncreateServer((_, res) => {\n  res.setHeader("content-type", "text/html; charset=utf-8");\n  res.end('<!doctype html><title>Web Verify Demo</title><main><h1>Catalog preview</h1></main>');\n}).listen(port, "127.0.0.1", () => {\n  console.log('Catalog app ready at http://127.0.0.1:' + port);\n});\n`,
+      "utf8"
+    );
+
+    const output = await runCli(cwd, "/web-verify-json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      success: boolean;
+      title: string;
+      snapshotPath?: string;
+    };
+
+    assert.equal(parsed.success, true);
+    assert.equal(parsed.title, "Web Verify Demo");
+    assert.ok(Boolean(parsed.snapshotPath));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("bin entry can execute help-json", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-bin-"));
   try {
@@ -546,6 +587,47 @@ test("bin entry supports product-style web smoke --json subcommands", async () =
     assert.equal(parsed.title, "Web Smoke Demo");
     await new Promise(resolve => setTimeout(resolve, 300));
     await assert.rejects(fetch(parsed.url));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("bin entry supports product-style web verify --json subcommands", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-bin-web-verify-subcmd-"));
+  try {
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(
+      join(cwd, "package.json"),
+      JSON.stringify(
+        {
+          name: "web-verify-demo",
+          private: true,
+          type: "module",
+          scripts: {
+            start: "node server.js"
+          }
+        },
+        null,
+        2
+      ) + "\n",
+      "utf8"
+    );
+    await writeFile(
+      join(cwd, "server.js"),
+      `import { createServer } from "node:http";\nconst port = Number.parseInt(process.env.PORT ?? "4180", 10);\ncreateServer((_, res) => {\n  res.setHeader("content-type", "text/html; charset=utf-8");\n  res.end('<!doctype html><title>Web Verify Demo</title><main><h1>Catalog preview</h1></main>');\n}).listen(port, "127.0.0.1", () => {\n  console.log('Catalog app ready at http://127.0.0.1:' + port);\n});\n`,
+      "utf8"
+    );
+
+    const output = await runBinWithArgs("--cwd", cwd, "web", "verify", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      success: boolean;
+      title: string;
+      snapshotPath?: string;
+    };
+
+    assert.equal(parsed.success, true);
+    assert.equal(parsed.title, "Web Verify Demo");
+    assert.ok(Boolean(parsed.snapshotPath));
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

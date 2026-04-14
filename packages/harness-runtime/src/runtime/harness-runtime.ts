@@ -149,6 +149,19 @@ export interface WebSmokeResult {
   errorMessage?: string;
 }
 
+export interface WebVerifyResult extends WebSmokeResult {
+  snapshotPath?: string;
+  consoleLogPath?: string;
+}
+
+interface ManagedWebAppProcess {
+  child: ReturnType<typeof spawn>;
+  url: { value: string };
+  output: { value: string };
+  startedAt: number;
+  terminate: () => Promise<void>;
+}
+
 export class HarnessRuntime {
   private readonly artifactStore: FileArtifactStore;
   private readonly freshExecutor = new InProcessFreshExecutor();
@@ -1055,15 +1068,24 @@ export class HarnessRuntime {
     return results;
   }
 
-  async smokeWebApp(): Promise<WebSmokeResult> {
+  private async startManagedWebApp(): Promise<
+    | { error: WebSmokeResult }
+    | { packageJson: { scripts?: Record<string, string>; dependencies?: Record<string, string>; devDependencies?: Record<string, string> }; managed: ManagedWebAppProcess }
+  > {
     const startedAt = Date.now();
     const packageJsonPath = join(this.session.cwd, "package.json");
-    let packageJson: { scripts?: Record<string, string> } | null = null;
+    let packageJson:
+      | { scripts?: Record<string, string>; dependencies?: Record<string, string>; devDependencies?: Record<string, string> }
+      | null = null;
 
     try {
-      packageJson = JSON.parse(await readFile(packageJsonPath, "utf8")) as { scripts?: Record<string, string> };
+      packageJson = JSON.parse(await readFile(packageJsonPath, "utf8")) as {
+        scripts?: Record<string, string>;
+        dependencies?: Record<string, string>;
+        devDependencies?: Record<string, string>;
+      };
     } catch {
-      return {
+      return { error: {
         success: false,
         url: "-",
         statusCode: null,
@@ -1071,11 +1093,11 @@ export class HarnessRuntime {
         bodySnippet: "",
         durationMs: Date.now() - startedAt,
         errorMessage: "No package.json found for web smoke."
-      };
+      } };
     }
 
     if (!packageJson.scripts?.start) {
-      return {
+      return { error: {
         success: false,
         url: "-",
         statusCode: null,
@@ -1083,7 +1105,7 @@ export class HarnessRuntime {
         bodySnippet: "",
         durationMs: Date.now() - startedAt,
         errorMessage: 'No "start" script found in package.json.'
-      };
+      } };
     }
 
     const startScript = packageJson.scripts.start;
@@ -1118,7 +1140,7 @@ export class HarnessRuntime {
       }).catch(() => null);
 
       if (exitCode !== 0) {
-        return {
+        return { error: {
           success: false,
           url: "-",
           statusCode: null,
@@ -1126,7 +1148,7 @@ export class HarnessRuntime {
           bodySnippet: installOutput.trim().slice(0, 200),
           durationMs: Date.now() - startedAt,
           errorMessage: `Dependency install failed before web smoke (exit ${exitCode ?? "unknown"}).`
-        };
+        } };
       }
     }
 
@@ -1186,32 +1208,52 @@ export class HarnessRuntime {
       }
     };
 
+    return {
+      packageJson,
+      managed: {
+        child,
+        url: { value: url },
+        output: { value: output },
+        startedAt,
+        terminate: terminateChild
+      }
+    };
+  }
+
+  async smokeWebApp(): Promise<WebSmokeResult> {
+    const setup = await this.startManagedWebApp();
+    if ("error" in setup) {
+      return setup.error;
+    }
+    const { managed } = setup;
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
     try {
       for (let attempt = 0; attempt < 120; attempt += 1) {
-        if (child.exitCode !== null && child.exitCode !== 0) {
+        if (managed.child.exitCode !== null && managed.child.exitCode !== 0) {
           return {
             success: false,
-            url,
+            url: managed.url.value,
             statusCode: null,
             title: null,
-            bodySnippet: output.trim(),
-            durationMs: Date.now() - startedAt,
-            errorMessage: `Web app exited early with code ${child.exitCode}.`
+            bodySnippet: managed.output.value.trim(),
+            durationMs: Date.now() - managed.startedAt,
+            errorMessage: `Web app exited early with code ${managed.child.exitCode}.`
           };
         }
 
         try {
-          const response = await fetch(`${url}/`);
+          const response = await fetch(`${managed.url.value}/`);
           const body = await response.text();
           const titleMatch = body.match(/<title>([^<]+)<\/title>/i);
           const bodySnippet = body.replace(/\s+/g, " ").trim().slice(0, 200);
           return {
             success: response.ok,
-            url,
+            url: managed.url.value,
             statusCode: response.status,
             title: titleMatch?.[1] ?? null,
             bodySnippet,
-            durationMs: Date.now() - startedAt
+            durationMs: Date.now() - managed.startedAt
           };
         } catch {
           await sleep(250);
@@ -1220,15 +1262,95 @@ export class HarnessRuntime {
 
       return {
         success: false,
-        url,
+        url: managed.url.value,
         statusCode: null,
         title: null,
-        bodySnippet: output.trim(),
-        durationMs: Date.now() - startedAt,
+        bodySnippet: managed.output.value.trim(),
+        durationMs: Date.now() - managed.startedAt,
         errorMessage: "Timed out waiting for web app to become reachable."
       };
     } finally {
-      await terminateChild();
+      await managed.terminate();
+    }
+  }
+
+  async verifyWebApp(): Promise<WebVerifyResult> {
+    const setup = await this.startManagedWebApp();
+    if ("error" in setup) {
+      return setup.error;
+    }
+    const { managed } = setup;
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+    const pwcli = join(process.env.HOME ?? "", ".codex", "skills", "playwright", "scripts", "playwright_cli.sh");
+
+    try {
+      for (let attempt = 0; attempt < 120; attempt += 1) {
+        try {
+          const response = await fetch(`${managed.url.value}/`);
+          const body = await response.text();
+          const titleMatch = body.match(/<title>([^<]+)<\/title>/i);
+          const bodySnippet = body.replace(/\s+/g, " ").trim().slice(0, 200);
+          const playwright = spawn(pwcli, ["open", managed.url.value], {
+            cwd: this.session.cwd,
+            env: {
+              ...process.env,
+              CODEX_HOME: process.env.CODEX_HOME ?? join(process.env.HOME ?? "", ".codex")
+            },
+            stdio: ["ignore", "pipe", "pipe"]
+          });
+          let output = "";
+          playwright.stdout.on("data", chunk => {
+            output += String(chunk);
+          });
+          playwright.stderr.on("data", chunk => {
+            output += String(chunk);
+          });
+          const exitCode = await new Promise<number | null>((resolve, reject) => {
+            playwright.once("error", reject);
+            playwright.once("exit", code => resolve(code));
+          }).catch(() => null);
+          const snapshotPath = output.match(/\[Snapshot\]\(([^)]+)\)/)?.[1];
+          const consolePath = output.match(/New console entries: ([^\s]+)/)?.[1];
+          await new Promise(resolve => {
+            const closer = spawn(pwcli, ["close"], {
+              cwd: this.session.cwd,
+              env: {
+                ...process.env,
+                CODEX_HOME: process.env.CODEX_HOME ?? join(process.env.HOME ?? "", ".codex")
+              },
+              stdio: ["ignore", "ignore", "ignore"]
+            });
+            closer.once("exit", () => resolve(null));
+            closer.once("error", () => resolve(null));
+          });
+          return {
+            success: response.ok && exitCode === 0,
+            url: managed.url.value,
+            statusCode: response.status,
+            title: titleMatch?.[1] ?? null,
+            bodySnippet,
+            durationMs: Date.now() - managed.startedAt,
+            snapshotPath,
+            consoleLogPath: consolePath,
+            errorMessage: exitCode === 0 ? undefined : "Playwright verification failed."
+          };
+        } catch {
+          await sleep(250);
+        }
+      }
+
+      return {
+        success: false,
+        url: managed.url.value,
+        statusCode: null,
+        title: null,
+        bodySnippet: managed.output.value.trim(),
+        durationMs: Date.now() - managed.startedAt,
+        errorMessage: "Timed out waiting for web app to become reachable."
+      };
+    } finally {
+      await managed.terminate();
     }
   }
 
