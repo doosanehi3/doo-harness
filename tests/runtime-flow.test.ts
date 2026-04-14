@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HarnessRuntime } from "../packages/harness-runtime/src/runtime/harness-runtime.js";
+import { createProcessPiSubstrateAdapter } from "../packages/ai/src/index.js";
 import { saveRunState } from "../packages/harness-runtime/src/state/run-state.js";
 import { saveTaskState } from "../packages/harness-runtime/src/state/task-state.js";
 
@@ -120,6 +121,26 @@ test("handoff then reset preserves handoff and clears active task", async () => 
     assert.equal(status.phase, "idle");
     assert.equal(status.activeTaskId, null);
     assert.equal(status.lastHandoffPath, handoffPath);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("substrate adapter constrains allowed tools exposed by runtime", async () => {
+  const cwd = await createTempHarnessDir();
+  try {
+    const runtime = await HarnessRuntime.create(cwd, "session-1", {
+      substrateAdapter: createProcessPiSubstrateAdapter({
+        cwd,
+        sessionId: "adapter-test",
+        allowedTools: ["read"]
+      })
+    });
+
+    await runtime.enterWorkerValidator("Adapter tool constraint demo");
+    const status = runtime.getStatus();
+
+    assert.deepEqual(status.allowedTools, ["read"]);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

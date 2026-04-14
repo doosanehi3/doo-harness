@@ -1,3 +1,4 @@
+import { createProcessPiSubstrateAdapter } from "../../ai/src/index.js";
 import { HarnessRuntime, writeDefaultRuntimeConfig } from "../../harness-runtime/src/index.js";
 import { fileURLToPath } from "node:url";
 import { runArtifacts } from "./commands/handlers/artifacts.js";
@@ -388,7 +389,13 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
 
 export async function main(): Promise<void> {
   const { runtimeCwd, input } = parseCliInvocation(process.argv.slice(2));
-  const runtime = await HarnessRuntime.create(runtimeCwd);
+  const runtime = await HarnessRuntime.create(runtimeCwd, "session-1", {
+    substrateAdapter: createProcessPiSubstrateAdapter({
+      cwd: runtimeCwd,
+      sessionId: `cli:${process.pid}`,
+      allowedTools: ["read", "write", "edit", "bash"]
+    })
+  });
   const output = await execute(runtime, input, runtimeCwd);
   const status = runtime.getStatus();
   const panel = renderRuntimePanel({

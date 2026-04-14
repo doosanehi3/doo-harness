@@ -2,7 +2,14 @@ import { join, relative } from "node:path";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { Agent, createBashTool, createDefaultCodingTools } from "@doo/harness-agent-core";
-import { complete, createModel, getModelAuthReadiness, type Message, type Model } from "@doo/harness-ai";
+import {
+  complete,
+  createModel,
+  getModelAuthReadiness,
+  type Message,
+  type Model,
+  type PiSubstrateAdapter
+} from "@doo/harness-ai";
 import type { ArtifactMeta } from "../artifacts/types.js";
 import { FileArtifactStore } from "../artifacts/file-artifact-store.js";
 import { InProcessFreshExecutor } from "../execution/fresh-context-executor.js";
@@ -171,11 +178,18 @@ export class HarnessRuntime {
   private readonly statePath: string;
   private readonly taskStatePath: string;
   private readonly config: ResolvedRuntimeConfig;
+  private readonly substrateAdapter: PiSubstrateAdapter | null;
   private session: HarnessSession;
 
-  private constructor(cwd: string, session: HarnessSession, config: ResolvedRuntimeConfig) {
+  private constructor(
+    cwd: string,
+    session: HarnessSession,
+    config: ResolvedRuntimeConfig,
+    substrateAdapter: PiSubstrateAdapter | null = null
+  ) {
     this.session = session;
     this.config = config;
+    this.substrateAdapter = substrateAdapter;
     this.statePath = join(cwd, ".harness", "state", "run-state.json");
     this.taskStatePath = join(cwd, ".harness", "artifacts", "task-state.json");
     this.artifactStore = new FileArtifactStore(join(cwd, ".harness", "artifacts"));
@@ -898,15 +912,41 @@ export class HarnessRuntime {
     );
   }
 
-  static async create(cwd: string, sessionId = "session-1"): Promise<HarnessRuntime> {
-    const base = createHarnessSession(sessionId, cwd);
+  static async create(
+    cwd: string,
+    sessionId = "session-1",
+    options?: { substrateAdapter?: PiSubstrateAdapter | null }
+  ): Promise<HarnessRuntime> {
+    const adapter = options?.substrateAdapter ?? null;
+    const effectiveCwd = adapter?.session.cwd || cwd;
+    const effectiveSessionId = adapter?.session.sessionId || sessionId;
+    const base = createHarnessSession(effectiveSessionId, effectiveCwd);
     const config = await loadRuntimeConfig(cwd);
     base.state = await loadRunState(join(cwd, ".harness", "state", "run-state.json"), base.state);
     base.taskState = await loadTaskState(join(cwd, ".harness", "artifacts", "task-state.json"));
     const reconciled = await HarnessRuntime.hydrateSessionMetadata(cwd, HarnessRuntime.reconcileSession(base));
     await saveRunState(join(cwd, ".harness", "state", "run-state.json"), reconciled.state);
     await saveTaskState(join(cwd, ".harness", "artifacts", "task-state.json"), reconciled.taskState as TaskState);
-    return new HarnessRuntime(cwd, reconciled, config);
+    return new HarnessRuntime(cwd, reconciled, config, adapter);
+  }
+
+  private getAllowedToolsForCurrentContext(taskId: string | null): string[] {
+    const runtimeAllowed = getAllowedToolNamesForPhase({
+      phase: this.session.state.phase,
+      flow: this.session.state.currentFlow,
+      activeTaskId: taskId,
+      activeTaskKind: taskId ? this.session.taskState.taskKinds[taskId] ?? null : null,
+      activeTaskStatus: taskId ? this.session.taskState.tasks[taskId] ?? null : null,
+      activeTaskBlocker: taskId ? this.session.taskState.taskBlockers[taskId] ?? null : null,
+      blocker: this.session.state.blocker
+    });
+
+    if (!this.substrateAdapter) {
+      return runtimeAllowed;
+    }
+
+    const hostAllowed = new Set(this.substrateAdapter.tools.getAllowedTools());
+    return runtimeAllowed.filter(tool => hostAllowed.has(tool));
   }
 
   getStatus(): RuntimeStatus {
@@ -971,19 +1011,7 @@ export class HarnessRuntime {
             resumePhase: this.session.taskState.resumePhase,
             readyTasks,
             pendingDependencies,
-            allowedTools: getAllowedToolNamesForPhase({
-              phase: this.session.state.phase,
-              flow: this.session.state.currentFlow,
-              activeTaskId: taskId,
-              activeTaskKind: taskId ? this.session.taskState.taskKinds[taskId] ?? null : null,
-              activeTaskStatus: taskId
-                ? this.session.taskState.tasks[taskId] ?? null
-                : null,
-              activeTaskBlocker: taskId
-                ? this.session.taskState.taskBlockers[taskId] ?? null
-                : null,
-              blocker: this.session.state.blocker
-              }),
+            allowedTools: this.getAllowedToolsForCurrentContext(taskId),
             nextAction: this.getSuggestedNextAction(taskStatus)
             };
           }
@@ -1402,24 +1430,8 @@ export class HarnessRuntime {
   }
 
   private createCodingAgent(): Agent {
-      const allowed = new Set(
-        getAllowedToolNamesForPhase({
-          phase: this.session.state.phase,
-          flow: this.session.state.currentFlow,
-          activeTaskId: this.session.state.activeTaskId,
-          activeTaskKind: this.session.state.activeTaskId
-            ? this.session.taskState.taskKinds[this.session.state.activeTaskId] ?? null
-            : null,
-          activeTaskStatus: this.session.state.activeTaskId
-            ? this.session.taskState.tasks[this.session.state.activeTaskId] ?? null
-            : null,
-          activeTaskBlocker: this.session.state.activeTaskId
-            ? this.session.taskState.taskBlockers[this.session.state.activeTaskId] ?? null
-            : null,
-          blocker: this.session.state.blocker
-        })
-        );
       const activeTaskId = this.session.taskState.activeTaskId ?? this.session.state.activeTaskId;
+      const allowed = new Set(this.getAllowedToolsForCurrentContext(activeTaskId));
       return new Agent({
         model: this.selectModelForTask(activeTaskId),
         systemPrompt:
