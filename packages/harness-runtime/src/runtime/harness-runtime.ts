@@ -1144,6 +1144,7 @@ export class HarnessRuntime {
         ...process.env,
         PORT: String(port)
       },
+      detached: true,
       stdio: ["ignore", "pipe", "pipe"]
     });
     let output = "";
@@ -1165,6 +1166,25 @@ export class HarnessRuntime {
     });
 
     const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+    const terminateChild = async () => {
+      if (child.exitCode !== null) {
+        return;
+      }
+      try {
+        process.kill(-child.pid!, "SIGTERM");
+      } catch {
+        child.kill("SIGTERM");
+      }
+      await new Promise(resolve => setTimeout(resolve, 250));
+      if (child.exitCode === null) {
+        try {
+          process.kill(-child.pid!, "SIGKILL");
+        } catch {
+          child.kill("SIGKILL");
+        }
+      }
+    };
 
     try {
       for (let attempt = 0; attempt < 120; attempt += 1) {
@@ -1208,7 +1228,7 @@ export class HarnessRuntime {
         errorMessage: "Timed out waiting for web app to become reachable."
       };
     } finally {
-      child.kill("SIGTERM");
+      await terminateChild();
     }
   }
 

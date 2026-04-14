@@ -390,6 +390,8 @@ test("web-smoke-json returns machine-readable web smoke result", async () => {
     assert.match(parsed.url, /127\.0\.0\.1:/);
     assert.match(parsed.bodySnippet, /Catalog preview/);
     assert.ok(parsed.durationMs >= 0);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    await assert.rejects(fetch(parsed.url));
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -536,11 +538,14 @@ test("bin entry supports product-style web smoke --json subcommands", async () =
     const output = await runBinWithArgs("--cwd", cwd, "web", "smoke", "--json");
     const parsed = JSON.parse(extractJsonPayload(output)) as {
       success: boolean;
+      url: string;
       title: string;
     };
 
     assert.equal(parsed.success, true);
     assert.equal(parsed.title, "Web Smoke Demo");
+    await new Promise(resolve => setTimeout(resolve, 300));
+    await assert.rejects(fetch(parsed.url));
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
