@@ -3,5 +3,8 @@
   "version": "0.0.1",
   "type": "module",
   "main": "./dist/index.js",
-  "types": "./dist/index.d.ts"
+  "types": "./dist/index.d.ts",
+  "dependencies": {
+    "@mariozechner/pi-coding-agent": "^0.65.2"
+  }
 }
