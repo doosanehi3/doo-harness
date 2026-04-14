@@ -626,6 +626,47 @@ test("blank nextjs catalog webapp repos get a framework-aware bootstrap", async 
   }
 });
 
+test("smokeWebApp follows the URL announced by the app even when it ignores PORT", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-runtime-web-smoke-announced-url-"));
+
+  try {
+    await writeFile(
+      join(cwd, "package.json"),
+      JSON.stringify(
+        {
+          name: "web-smoke-announced-url",
+          private: true,
+          type: "module",
+          scripts: {
+            start: "node server.js"
+          }
+        },
+        null,
+        2
+      ) + "\n",
+      "utf8"
+    );
+    await writeFile(
+      join(cwd, "server.js"),
+      `import { createServer } from "node:http";\ncreateServer((_, res) => {\n  res.setHeader("content-type", "text/html; charset=utf-8");\n  res.end('<!doctype html><title>Announced URL Demo</title><main><h1>Alternate port</h1></main>');\n}).listen(0, "127.0.0.1", function() {\n  const address = this.address();\n  console.log('Catalog app ready at http://127.0.0.1:' + address.port);\n});\n`,
+      "utf8"
+    );
+
+    const runtime = await HarnessRuntime.create(cwd);
+    const result = await runtime.smokeWebApp();
+
+    assert.equal(result.success, true);
+    assert.equal(result.statusCode, 200);
+    assert.equal(result.title, "Announced URL Demo");
+    assert.match(result.url, /127\.0\.0\.1:\d+/);
+    assert.match(result.bodySnippet, /Alternate port/);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    await assert.rejects(fetch(result.url));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("implementation task can use an openai-compatible worker model with responses-style function_call payloads", async () => {
   const server = createServer((_, res) => {
     res.setHeader("content-type", "application/json");
