@@ -73,12 +73,18 @@ test("status-json returns machine-readable runtime status without panel text", a
       flow: string;
       activeTaskId: string;
       activeTaskRecoveryHint: string | null;
+      handoffEligible: boolean;
+      handoffReason: string | null;
+      resumePhase: string | null;
     };
 
     assert.equal(parsed.phase, "planning");
     assert.equal(parsed.flow, "milestone");
     assert.equal(parsed.activeTaskId, "T1");
     assert.equal(parsed.activeTaskRecoveryHint, null);
+    assert.equal(parsed.handoffEligible, true);
+    assert.equal(parsed.handoffReason, null);
+    assert.equal(parsed.resumePhase, null);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -94,8 +100,10 @@ test("help-json returns machine-readable onboarding data", async () => {
       commandGroups: Array<{ title: string; commands: string[] }>;
     };
 
-    assert.match(parsed.overview, /artifact-led state/i);
+    assert.match(parsed.overview, /pi-ready runtime-core product/i);
     assert.ok(parsed.quickStart.some(line => line.includes("config init")));
+    assert.ok(parsed.quickStart.some(line => line.includes("harness help")));
+    assert.ok(parsed.commandGroups.some(group => group.title === "Operator Loop"));
     assert.ok(parsed.commandGroups.some(group => group.title === "Provider"));
   } finally {
     await rm(cwd, { recursive: true, force: true });

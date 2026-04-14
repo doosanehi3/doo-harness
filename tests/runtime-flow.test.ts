@@ -39,6 +39,9 @@ test("longrun planning persists milestone flow and active task", async () => {
 	        assert.equal(status.activeModelId, "stub-planner");
         assert.equal(status.activeExecutionMode, "fresh");
 	        assert.deepEqual(status.activeTaskVerifyCommand, ["manual:review requirements"]);
+        assert.equal(status.handoffEligible, true);
+        assert.equal(status.handoffReason, null);
+        assert.equal(status.resumePhase, null);
         const taskState = runtime.getTaskStateSnapshot();
         assert.equal(taskState.taskKinds.T2, "implementation");
       assert.equal(taskState.taskOwners.T2, "worker");
@@ -117,6 +120,34 @@ test("handoff then reset preserves handoff and clears active task", async () => 
     assert.equal(status.phase, "idle");
     assert.equal(status.activeTaskId, null);
     assert.equal(status.lastHandoffPath, handoffPath);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("review does not complete from stale verification after a new task output is produced", async () => {
+  const cwd = await createTempHarnessDir();
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("Stale verification guard", true);
+    await runtime.executeCurrentTask();
+    await runtime.verify();
+
+    const afterVerify = runtime.getStatus();
+    assert.equal(afterVerify.lastVerificationStatus, "pass");
+    assert.equal(afterVerify.phase, "reviewing");
+
+    await runtime.executeCurrentTask();
+    const afterNewOutput = runtime.getStatus();
+    assert.equal(afterNewOutput.lastVerificationStatus, null);
+    assert.equal(afterNewOutput.lastVerificationPath, null);
+
+    const reviewPath = await runtime.review();
+    const afterReview = runtime.getStatus();
+
+    assert.match(reviewPath, /reviews\/.+\.md$/);
+    assert.notEqual(afterReview.phase, "completed");
+    assert.notEqual(afterReview.activeTaskStatus, "done");
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

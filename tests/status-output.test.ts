@@ -21,7 +21,10 @@ test("formatStatusLine includes allowed tools", () => {
     recoveryHint: "manual_output_required",
     verification: null,
     handoff: null,
+    handoffEligible: true,
+    handoffReason: null,
     blocker: null,
+    resumePhase: "planning",
     readyTasks: ["T1 (analysis) Clarify edge cases owned by planner producing clarified requirements note"],
     pendingDependencies: ["T2 (implementation) Implement the required change owned by worker producing code changes waiting on T1"],
     allowedTools: ["read", "bash"],
@@ -34,5 +37,7 @@ test("formatStatusLine includes allowed tools", () => {
   assert.match(output, /Max tokens: 2000/);
   assert.match(output, /Execution mode: fresh/);
   assert.match(output, /Recovery hint: manual_output_required/);
+  assert.match(output, /Handoff eligible: yes/);
+  assert.match(output, /Resume target: planning/);
   assert.match(output, /Allowed tools: read, bash/);
 });

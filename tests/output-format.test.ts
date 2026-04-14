@@ -14,9 +14,15 @@ test("formatStatusLine humanizes manual verify commands", () => {
     verifyCommand: ["manual:review requirements", "pnpm run test"],
     verification: null,
     handoff: null,
+    handoffEligible: false,
+    handoffReason: "No active runtime state is available to hand off.",
     blocker: null,
+    resumePhase: "reviewing",
     nextAction: "Use /continue."
   });
 
   assert.match(output, /Verify cmd: manual review \(review requirements\) ;; pnpm run test/);
+  assert.match(output, /Handoff eligible: no/);
+  assert.match(output, /Handoff reason: No active runtime state is available to hand off\./);
+  assert.match(output, /Resume target: reviewing/);
 });

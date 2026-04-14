@@ -30,10 +30,12 @@ export interface RuntimePanelData {
   verificationStatus?: string | null;
   verification?: string | null;
   handoff?: string | null;
+  handoffEligible?: boolean;
+  handoffReason?: string | null;
   blocker?: string | null;
+  resumePhase?: string | null;
   readyTasks?: string[] | null;
   pendingDependencies?: string[] | null;
   allowedTools?: string[] | null;
-  resumePhase?: string | null;
   nextAction?: string | null;
 }

@@ -47,7 +47,10 @@ export function renderRuntimePanel(data: RuntimePanelData): string {
     `Verification status: ${data.verificationStatus ?? "-"}`,
     `Verification: ${data.verification ?? "-"}`,
     `Handoff: ${data.handoff ?? "-"}`,
+    `Handoff eligible: ${data.handoffEligible === undefined ? "-" : data.handoffEligible ? "yes" : "no"}`,
+    `Handoff reason: ${data.handoffReason ?? "-"}`,
     `Blocker: ${data.blocker ?? "-"}`,
+    `Resume target: ${data.resumePhase ?? "-"}`,
     `Ready tasks: ${data.readyTasks && data.readyTasks.length > 0 ? data.readyTasks.join(" | ") : "-"}`,
     `Pending dependencies: ${
       data.pendingDependencies && data.pendingDependencies.length > 0

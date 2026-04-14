@@ -88,6 +88,8 @@ export interface RuntimeStatus {
   lastVerificationPath: string | null;
   lastReviewPath: string | null;
   lastHandoffPath: string | null;
+  handoffEligible: boolean;
+  handoffReason: string | null;
   blocker: string | null;
   resumePhase: string | null;
   readyTasks: string[];
@@ -913,6 +915,7 @@ export class HarnessRuntime {
         const taskStatus = taskId ? this.session.taskState.tasks[taskId] ?? null : null;
         const readyTasks = this.getReadyTaskDescriptors();
         const pendingDependencies = this.getPendingDependencySummaries();
+        const handoff = this.getHandoffEligibility();
         return {
         phase: this.session.state.phase,
           flow: this.session.state.currentFlow,
@@ -962,6 +965,8 @@ export class HarnessRuntime {
           lastVerificationPath: this.session.state.lastVerificationPath,
             lastReviewPath: this.session.state.lastReviewPath,
             lastHandoffPath: this.session.state.lastHandoffPath,
+            handoffEligible: handoff.eligible,
+            handoffReason: handoff.reason,
             blocker: this.session.state.blocker,
             resumePhase: this.session.taskState.resumePhase,
             readyTasks,
@@ -1170,20 +1175,26 @@ export class HarnessRuntime {
       stdio: ["ignore", "pipe", "pipe"]
     });
     let output = "";
+    const managedUrl = { value: url };
+    const managedOutput = { value: output };
     child.stdout.on("data", chunk => {
       const text = String(chunk);
       output += text;
+      managedOutput.value = output;
       const announced = text.match(/https?:\/\/(?:127\.0\.0\.1|localhost):\d+/);
       if (announced?.[0]) {
         url = announced[0].replace("localhost", "127.0.0.1");
+        managedUrl.value = url;
       }
     });
     child.stderr.on("data", chunk => {
       const text = String(chunk);
       output += text;
+      managedOutput.value = output;
       const announced = text.match(/https?:\/\/(?:127\.0\.0\.1|localhost):\d+/);
       if (announced?.[0]) {
         url = announced[0].replace("localhost", "127.0.0.1");
+        managedUrl.value = url;
       }
     });
 
@@ -1212,8 +1223,8 @@ export class HarnessRuntime {
       packageJson,
       managed: {
         child,
-        url: { value: url },
-        output: { value: output },
+        url: managedUrl,
+        output: managedOutput,
         startedAt,
         terminate: terminateChild
       }
@@ -1505,6 +1516,38 @@ export class HarnessRuntime {
         return `Use /continue or /resume to re-enter ${this.session.taskState.resumePhase}.`;
       }
       return "Use /status, /continue, or /plan to move forward.";
+  }
+
+  private getHandoffEligibility(): { eligible: boolean; reason: string | null } {
+    const hasRuntimeContext =
+      this.session.state.goalSummary !== null ||
+      this.session.state.activeSpecPath !== null ||
+      this.session.state.activePlanPath !== null ||
+      this.session.state.activeMilestoneId !== null ||
+      this.session.state.activeTaskId !== null ||
+      this.session.taskState.activeMilestoneId !== null ||
+      this.session.taskState.activeTaskId !== null ||
+      this.session.state.lastVerificationPath !== null ||
+      this.session.state.lastReviewPath !== null ||
+      this.session.state.lastHandoffPath !== null;
+
+    if (!hasRuntimeContext) {
+      return {
+        eligible: false,
+        reason: "No active runtime state is available to hand off."
+      };
+    }
+
+    return { eligible: true, reason: null };
+  }
+
+  private invalidateVerificationState(): void {
+    this.session.state.lastVerificationStatus = null;
+    this.session.taskState.lastVerificationStatus = null;
+    this.session.state.lastVerificationPath = null;
+    this.session.taskState.lastVerificationPath = null;
+    this.session.state.lastReviewPath = null;
+    this.session.taskState.lastReviewPath = null;
   }
 
   private async runAgentTurn(input: string): Promise<string> {
@@ -2077,6 +2120,7 @@ Goal: ${input}
       this.session.state.activePlanPath = null;
       this.session.state.activeMilestoneId = null;
       this.session.state.activeTaskId = null;
+      this.session.state.lastVerificationStatus = null;
       this.session.state.lastVerificationPath = null;
       this.session.state.lastReviewPath = null;
       this.session.state.blocker = null;
@@ -2096,6 +2140,7 @@ Goal: ${input}
       this.session.taskState.taskOutputs = {};
       this.session.taskState.taskBlockers = {};
       this.session.taskState.taskRecoveryHints = {};
+        this.session.taskState.lastVerificationStatus = null;
         this.session.taskState.lastVerificationPath = null;
         this.session.taskState.lastReviewPath = null;
         this.session.taskState.lastHandoffPath = this.session.state.lastHandoffPath;
@@ -2419,7 +2464,9 @@ Goal: ${input}
   }
 
   async review(): Promise<string> {
-    const hasPassedVerification = this.session.state.lastVerificationPath !== null;
+    const hasPassedVerification =
+      this.session.state.lastVerificationStatus === "pass" &&
+      this.session.state.lastVerificationPath !== null;
     if (hasPassedVerification && this.session.state.phase === "reviewing") {
       if (this.session.taskState.activeTaskId) {
         this.session.taskState.tasks[this.session.taskState.activeTaskId] = "done";
@@ -2553,11 +2600,8 @@ Goal: ${input}
     this.session.state.activeTaskId = nextTaskId;
     this.session.state.phase = "planning";
     this.session.state.currentFlow = "milestone";
-    this.session.state.lastVerificationPath = null;
-    this.session.state.lastReviewPath = null;
+    this.invalidateVerificationState();
     this.session.state.updatedAt = new Date().toISOString();
-    this.session.taskState.lastVerificationPath = null;
-    this.session.taskState.lastReviewPath = null;
     await this.persist();
     return `${current} completed; ${next} is now active`;
   }
@@ -2828,6 +2872,7 @@ Goal: ${input}
         executionNoteBody,
         this.session.sessionId
       );
+    this.invalidateVerificationState();
     this.session.taskState.taskOutputs[taskId] = executionNote.path;
     delete this.session.taskState.taskRecoveryHints[taskId];
     if (role === "worker" && executionMode === "agent" && activeModel.provider !== "local" && changedFiles.length === 0) {
@@ -2907,6 +2952,7 @@ Goal: ${input}
       `Worker-validator flow initialized for ${this.session.state.activeTaskId}.${taskDescription ? `\n\nTask: ${taskDescription}` : ""}`,
       this.session.sessionId
     );
+    this.invalidateVerificationState();
     this.session.taskState.taskOutputs[this.session.state.activeTaskId] = note.path;
     await this.persist();
     return this.session.state.activeTaskId;

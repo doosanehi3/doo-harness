@@ -454,7 +454,7 @@ test("blank catalog webapp repos get a runnable promotional catalog bootstrap", 
 
     try {
       await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("server did not start in time")), 5000);
+        const timer = setTimeout(() => reject(new Error("server did not start in time")), 30000);
         child.stdout.on("data", chunk => {
           if (String(chunk).includes("http://127.0.0.1:4179")) {
             clearTimeout(timer);

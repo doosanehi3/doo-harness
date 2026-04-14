@@ -44,7 +44,10 @@ export function formatStatusLine(input: {
   verificationStatus?: string | null;
   verification?: string | null;
   handoff?: string | null;
+  handoffEligible?: boolean;
+  handoffReason?: string | null;
   blocker?: string | null;
+  resumePhase?: string | null;
   readyTasks?: string[] | null;
   pendingDependencies?: string[] | null;
   allowedTools?: string[] | null;
@@ -82,7 +85,10 @@ export function formatStatusLine(input: {
     `Verification status: ${input.verificationStatus ?? "-"}`,
     `Verification: ${input.verification ?? "-"}`,
     `Handoff: ${input.handoff ?? "-"}`,
+    `Handoff eligible: ${input.handoffEligible === undefined ? "-" : input.handoffEligible ? "yes" : "no"}`,
+    `Handoff reason: ${input.handoffReason ?? "-"}`,
     `Blocker: ${input.blocker ?? "-"}`,
+    `Resume target: ${input.resumePhase ?? "-"}`,
     `Ready tasks: ${input.readyTasks && input.readyTasks.length > 0 ? input.readyTasks.join(" | ") : "-"}`,
     `Pending dependencies: ${
       input.pendingDependencies && input.pendingDependencies.length > 0

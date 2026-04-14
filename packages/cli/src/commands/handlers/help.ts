@@ -10,14 +10,25 @@ export interface HelpPayload {
 export function buildHelpPayload(): HelpPayload {
   return {
     overview:
-      "Harness is a long-running coding runtime focused on artifact-led state, verification, recovery, and provider-aware operation.",
+      "Harness is a pi-ready runtime-core product and long-running coding runtime focused on artifact-led state, verification, recovery, and provider-aware operation.",
     quickStart: [
       "Initialize config: harness config init or harness config init openai-codex",
       "Check provider readiness: harness provider check or harness provider doctor",
       "Start work: harness plan <goal> or harness longrun <goal>",
-      "Drive progress: harness continue, harness status, harness review, harness handoff, harness reset"
+      "Drive the operator loop: harness help, harness status, harness verify, harness handoff, harness reset, harness resume"
     ],
     commandGroups: [
+      {
+        title: "Operator Loop",
+        commands: [
+          "harness help [--json]",
+          "harness status [--json]",
+          "harness verify [--json]",
+          "harness handoff [--json]",
+          "harness reset [--json]",
+          "harness resume [--json]"
+        ]
+      },
       {
         title: "Core Flow",
         commands: [
