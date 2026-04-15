@@ -12,6 +12,7 @@
   "scripts": {
     "check": "tsc -p tsconfig.json --pretty false",
     "dev": "node --import tsx packages/cli/src/main.ts",
+    "smoke:pi:interactive": "bash scripts/pi-interactive-renderer-smoke.sh",
     "smoke:pi:install": "node scripts/pi-smoke.mjs install",
     "smoke:pi:print": "node scripts/pi-smoke.mjs print",
     "smoke:pi:ui": "node --import tsx scripts/pi-ui-capture.mjs",

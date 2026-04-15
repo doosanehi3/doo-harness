@@ -8,6 +8,8 @@ Harness CLI and the pi-hosted extension path.
 - Node.js 22.x or newer
 - `pnpm`
 - `ripgrep` (`rg`) on `PATH`
+- `expect`
+- `python3`
 - `pi` CLI when validating the extension surface
 
 `ripgrep` is required for:
@@ -18,6 +20,10 @@ Harness CLI and the pi-hosted extension path.
 - `/harness grep`
 
 If `rg` is missing, the search commands fail with an explicit runtime error.
+
+`expect` and `python3` are required for:
+
+- `pnpm run smoke:pi:interactive`
 
 ## Workspace Bring-Up
 
@@ -45,6 +51,7 @@ For extension validation on a fresh machine, run:
 pnpm run smoke:pi:print
 pnpm run smoke:pi:install
 pnpm run smoke:pi:ui
+pnpm run smoke:pi:interactive
 ```
 
 Then run the manual interactive smoke from

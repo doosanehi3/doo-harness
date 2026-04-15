@@ -28,6 +28,31 @@ The script currently exercises:
 - `status --json`
 - `find --json catalog-plan-target`
 
+## Scriptable Interactive Renderer Smoke
+
+Run:
+
+```bash
+pnpm run smoke:pi:interactive
+```
+
+This drives a real interactive pi session through `expect` and checks:
+
+- extension load visibility
+- `/harness help --json` slash-command acceptance
+- notification text for the help path
+- widget lines rendered by the real interactive session for the help path
+
+The current scripted renderer pass intentionally validates the most stable
+interactive path first. Dashboard and other richer renderer surfaces are still
+best checked through the existing handler/widget smoke plus targeted manual
+inspection when needed.
+
+Prerequisites for this scripted path:
+
+- `expect`
+- `python3`
+
 ## Launch
 
 ```bash
@@ -54,8 +79,8 @@ pi --no-extensions -e /absolute/path/to/harness/packages/extensions/src/pi-exten
 
 ## Current Note
 
-Manual smoke remains the source of truth for the real interactive pi session.
+The interactive renderer smoke is now the first automation layer for real pi
+session verification.
 
-The scriptable UI capture closes the widget/notification evidence gap and is
-now part of the release gate, but it does not replace the real interactive
-slash-command smoke.
+Manual smoke remains the fallback when the renderer script is inconclusive on a
+specific terminal environment.

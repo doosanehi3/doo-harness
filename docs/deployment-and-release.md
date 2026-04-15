@@ -74,8 +74,8 @@ Rationale:
 - [x] scriptable print-mode smoke
 - [x] scriptable install-from-path smoke
 - [x] install-from-path smoke script
-- [x] interactive pi session launch and slash-command acceptance smoke
-- [x] interactive widget/notification rendering capture
+- [x] interactive pi session launch smoke for the help-path renderer flow
+- [x] interactive widget/notification capture for the help-path renderer flow
 - [x] define print/install smoke as required release-gate commands
 
 ## Recommended Next Release Gate
@@ -87,9 +87,10 @@ Before calling the package shippable:
 3. run `pnpm run smoke:pi:print`
 4. run `pnpm run smoke:pi:install`
 5. run `pnpm run smoke:pi:ui`
-6. run interactive pi session smoke
-7. verify widget rendering and `/harness` command visibility
-8. record release note summary
+6. run `pnpm run smoke:pi:interactive`
+7. run manual interactive pi smoke for richer renderer surfaces if needed on the current terminal
+8. verify widget rendering and `/harness` command visibility
+9. record release note summary
 
 ## Notes
 
