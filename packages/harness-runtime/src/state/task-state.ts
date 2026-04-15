@@ -19,6 +19,9 @@ export interface TaskState {
     milestoneKinds: Record<string, string>;
   milestoneDependencies: Record<string, string[]>;
   taskOutputs: Record<string, string>;
+  taskVerificationPaths: Record<string, string>;
+  taskReviewPaths: Record<string, string>;
+  taskHandoffPaths: Record<string, string>;
   taskBlockers: Record<string, string>;
   taskRecoveryHints: Record<string, RecoveryHint>;
   resumePhase: Phase | null;
@@ -46,6 +49,9 @@ export function createInitialTaskState(): TaskState {
       milestoneKinds: {},
       milestoneDependencies: {},
       taskOutputs: {},
+      taskVerificationPaths: {},
+      taskReviewPaths: {},
+      taskHandoffPaths: {},
       taskBlockers: {},
       taskRecoveryHints: {},
       resumePhase: null,

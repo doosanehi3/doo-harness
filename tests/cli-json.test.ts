@@ -1311,6 +1311,101 @@ test("artifacts related for a non-active task marks session artifacts as support
   }
 });
 
+test("artifacts related for a non-active task uses persisted task-bound provenance when present", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-related-exact-provenance-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI related exact provenance demo", true);
+    await runtime.executeCurrentTask();
+    await runtime.verify();
+    await runtime.review();
+
+    const taskState = runtime.getTaskStateSnapshot();
+    taskState.taskTexts.T9 = "Older task";
+    taskState.taskOutputs.T9 = join(cwd, ".harness", "artifacts", "legacy-output.md");
+    taskState.taskVerificationPaths.T9 = join(cwd, ".harness", "artifacts", "verifications", "legacy-verification.md");
+    taskState.taskReviewPaths.T9 = join(cwd, ".harness", "artifacts", "reviews", "legacy-review.md");
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    await mkdir(join(cwd, ".harness", "artifacts", "verifications"), { recursive: true });
+    await mkdir(join(cwd, ".harness", "artifacts", "reviews"), { recursive: true });
+    await writeFile(taskState.taskOutputs.T9, "legacy output\n", "utf8");
+    await writeFile(taskState.taskVerificationPaths.T9, "legacy verification\n", "utf8");
+    await writeFile(taskState.taskReviewPaths.T9, "legacy review\n", "utf8");
+    const { saveTaskState } = await import("../packages/harness-runtime/src/state/task-state.js");
+    await saveTaskState(join(cwd, ".harness", "artifacts", "task-state.json"), taskState);
+
+    const output = await runCli(cwd, "artifacts", "related", "T9", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      items: Array<{ type: string; path: string; relevance: string }>;
+      groups: Array<{ label: string }>;
+    };
+
+    assert.ok(parsed.items.some(item => item.type === "verification" && item.path.endsWith("legacy-verification.md") && item.relevance === "exact"));
+    assert.ok(parsed.items.some(item => item.type === "review" && item.path.endsWith("legacy-review.md") && item.relevance === "exact"));
+    assert.ok(parsed.groups.some(group => group.label === "exact"));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("artifacts related still uses persisted task-bound provenance after session latest pointers are cleared", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-related-provenance-fallback-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI related provenance fallback demo", true);
+
+    const taskState = runtime.getTaskStateSnapshot();
+    taskState.taskTexts.T9 = "Older task";
+    taskState.taskVerificationPaths.T9 = join(cwd, ".harness", "artifacts", "verifications", "legacy-verification.md");
+    taskState.taskReviewPaths.T9 = join(cwd, ".harness", "artifacts", "reviews", "legacy-review.md");
+    taskState.taskHandoffPaths.T9 = join(cwd, ".harness", "artifacts", "handoffs", "legacy-handoff.md");
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    await mkdir(join(cwd, ".harness", "artifacts", "verifications"), { recursive: true });
+    await mkdir(join(cwd, ".harness", "artifacts", "reviews"), { recursive: true });
+    await mkdir(join(cwd, ".harness", "artifacts", "handoffs"), { recursive: true });
+    await writeFile(taskState.taskVerificationPaths.T9, "legacy verification\n", "utf8");
+    await writeFile(taskState.taskReviewPaths.T9, "legacy review\n", "utf8");
+    await writeFile(taskState.taskHandoffPaths.T9, "legacy handoff\n", "utf8");
+    taskState.lastVerificationPath = null;
+    taskState.lastReviewPath = null;
+    taskState.lastHandoffPath = null;
+    const { saveTaskState } = await import("../packages/harness-runtime/src/state/task-state.js");
+    await saveTaskState(join(cwd, ".harness", "artifacts", "task-state.json"), taskState);
+
+    const { saveRunState } = await import("../packages/harness-runtime/src/state/run-state.js");
+    await saveRunState(
+      join(cwd, ".harness", "state", "run-state.json"),
+      {
+        phase: "paused",
+        currentFlow: "auto",
+        goalSummary: "fallback demo",
+        activeSpecPath: null,
+        activePlanPath: null,
+        activeMilestoneId: null,
+        activeTaskId: null,
+        lastVerificationStatus: null,
+        lastVerificationPath: null,
+        lastReviewPath: null,
+        lastHandoffPath: null,
+        pendingQuestions: [],
+        blocker: null,
+        updatedAt: new Date().toISOString()
+      }
+    );
+
+    const output = await runCli(cwd, "artifacts", "related", "T9", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      items: Array<{ type: string; path: string; relevance: string }>;
+    };
+
+    assert.ok(parsed.items.some(item => item.type === "verification" && item.path.endsWith("legacy-verification.md") && item.relevance === "exact"));
+    assert.ok(parsed.items.some(item => item.type === "review" && item.path.endsWith("legacy-review.md") && item.relevance === "exact"));
+    assert.ok(parsed.items.some(item => item.type === "handoff" && item.path.endsWith("legacy-handoff.md") && item.relevance === "exact"));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("timeline-json reports runtime and artifact timeline events", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-timeline-"));
   try {

@@ -1244,8 +1244,6 @@ export class HarnessRuntime {
       seen.add(entry.path);
       items.push(entry);
     };
-    const exactTarget = taskId !== null && taskId === status.activeTaskId;
-
     if (status.activeSpecPath) {
       push({ kind: "artifact", type: "spec", path: status.activeSpecPath, relevance: "supporting", reason: "active spec" });
     }
@@ -1268,32 +1266,44 @@ export class HarnessRuntime {
       });
     }
 
-    if (this.session.state.lastVerificationPath) {
+    {
+      const exactVerificationPath = taskId ? this.session.taskState.taskVerificationPaths[taskId] ?? null : null;
+      const fallbackVerificationPath = this.session.state.lastVerificationPath;
+      if (exactVerificationPath || fallbackVerificationPath) {
       push({
         kind: "artifact",
         type: "verification",
-        path: this.session.state.lastVerificationPath,
-        relevance: exactTarget ? "exact" : "supporting",
-        reason: exactTarget ? "verification for current active task" : "latest verification in session"
+        path: exactVerificationPath ?? fallbackVerificationPath!,
+        relevance: exactVerificationPath ? "exact" : "supporting",
+        reason: exactVerificationPath ? "verification recorded for the selected task" : "latest verification in session"
       });
+      }
     }
-    if (this.session.state.lastReviewPath) {
+    {
+      const exactReviewPath = taskId ? this.session.taskState.taskReviewPaths[taskId] ?? null : null;
+      const fallbackReviewPath = this.session.state.lastReviewPath;
+      if (exactReviewPath || fallbackReviewPath) {
       push({
         kind: "artifact",
         type: "review",
-        path: this.session.state.lastReviewPath,
-        relevance: exactTarget ? "exact" : "supporting",
-        reason: exactTarget ? "review for current active task" : "latest review in session"
+        path: exactReviewPath ?? fallbackReviewPath!,
+        relevance: exactReviewPath ? "exact" : "supporting",
+        reason: exactReviewPath ? "review recorded for the selected task" : "latest review in session"
       });
+      }
     }
-    if (this.session.state.lastHandoffPath) {
+    {
+      const exactHandoffPath = taskId ? this.session.taskState.taskHandoffPaths[taskId] ?? null : null;
+      const fallbackHandoffPath = this.session.state.lastHandoffPath;
+      if (exactHandoffPath || fallbackHandoffPath) {
       push({
         kind: "artifact",
         type: "handoff",
-        path: this.session.state.lastHandoffPath,
-        relevance: exactTarget ? "exact" : "supporting",
-        reason: exactTarget ? "handoff for current active task/session" : "latest handoff in session"
+        path: exactHandoffPath ?? fallbackHandoffPath!,
+        relevance: exactHandoffPath ? "exact" : "supporting",
+        reason: exactHandoffPath ? "handoff recorded for the selected task" : "latest handoff in session"
       });
+      }
     }
 
     const taskStatePath = join(this.session.cwd, ".harness", "artifacts", "task-state.json");
@@ -1909,6 +1919,11 @@ export class HarnessRuntime {
     this.session.taskState.lastVerificationPath = null;
     this.session.state.lastReviewPath = null;
     this.session.taskState.lastReviewPath = null;
+    const taskId = this.session.taskState.activeTaskId ?? this.session.state.activeTaskId;
+    if (taskId) {
+      delete this.session.taskState.taskVerificationPaths[taskId];
+      delete this.session.taskState.taskReviewPaths[taskId];
+    }
   }
 
   private async runAgentTurn(input: string): Promise<string> {
@@ -2797,6 +2812,9 @@ Goal: ${input}
     this.session.state.lastVerificationPath = path;
     this.session.taskState.lastVerificationPath = path;
       if (this.session.taskState.activeTaskId) {
+        this.session.taskState.taskVerificationPaths[this.session.taskState.activeTaskId] = path;
+      }
+      if (this.session.taskState.activeTaskId) {
         this.session.taskState.tasks[this.session.taskState.activeTaskId] =
           result.status === "pass" ? "validated" : "blocked";
         if (result.status === "pass") {
@@ -2911,6 +2929,9 @@ Goal: ${input}
     const meta = await this.artifactStore.write("review", `# Review\n\n${summary}`, this.session.sessionId);
     this.session.state.lastReviewPath = meta.path;
     this.session.taskState.lastReviewPath = meta.path;
+    if (taskId) {
+      this.session.taskState.taskReviewPaths[taskId] = meta.path;
+    }
     await this.persist();
     return meta.path;
   }
@@ -3455,6 +3476,9 @@ Goal: ${input}
     });
     this.session.state.lastHandoffPath = handoffPath;
     this.session.taskState.lastHandoffPath = handoffPath;
+    if (taskId) {
+      this.session.taskState.taskHandoffPaths[taskId] = handoffPath;
+    }
     await this.persist();
     return handoffPath;
   }
