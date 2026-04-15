@@ -1,5 +1,6 @@
 {
   "name": "@doo/harness-extensions",
+  "private": true,
   "version": "0.0.1",
   "description": "Harness runtime extension surfaces for pi-coding-agent",
   "type": "module",

@@ -29,7 +29,8 @@ Still product work, not architecture work:
 - [x] add `pi-package` keyword
 - [x] declare `@mariozechner/pi-coding-agent` as a peer/dev dependency
 - [x] choose source-based extension loading as the current install contract
-- [ ] decide npm publishing scope/versioning strategy
+- [x] decide not to publish to npm yet; use local-path or git-based install until
+  the package contract stabilizes
 - [ ] decide whether a later published contract should switch to dist-based artifacts
 
 ### 2. User-facing install UX
@@ -111,6 +112,10 @@ Current policy:
 - `@doo/harness-extensions` is versioned inside the main repository lifecycle
 - runtime and extension changes are documented together until package extraction
   becomes necessary
+- `@doo/harness-extensions` is **not published to npm yet**
+- supported install paths today are:
+  - local path install
+  - git/package source install once the repository distribution path is chosen
 
 Versioning guidance:
 
