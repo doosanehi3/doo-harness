@@ -2,6 +2,7 @@ import { createProcessPiSubstrateAdapter } from "../../ai/src/index.js";
 import { HarnessRuntime, writeDefaultRuntimeConfig } from "../../harness-runtime/src/index.js";
 import { fileURLToPath } from "node:url";
 import { formatInvalidArtifactFilter, parseArtifactFilter, runArtifacts } from "./commands/handlers/artifacts.js";
+import { runRelatedArtifacts, runTimeline } from "./commands/handlers/artifact-browser.js";
 import { runAdvance } from "./commands/handlers/advance.js";
 import { runAuto } from "./commands/handlers/auto.js";
 import { runBlock } from "./commands/handlers/block.js";
@@ -111,6 +112,24 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
     }
     const artifacts = await runtime.listArtifacts();
     return JSON.stringify(filter ? artifacts.filter(artifact => artifact.type === filter) : artifacts, null, 2);
+  }
+
+  if (trimmed === "/artifacts-related" || trimmed.startsWith("/artifacts-related ")) {
+    const rawTaskId = trimmed.replace(/^\/artifacts-related\s*/, "").trim();
+    return runRelatedArtifacts(runtime.getRelatedArtifactsPayload(rawTaskId || undefined));
+  }
+
+  if (trimmed === "/artifacts-related-json" || trimmed.startsWith("/artifacts-related-json ")) {
+    const rawTaskId = trimmed.replace(/^\/artifacts-related-json\s*/, "").trim();
+    return JSON.stringify(runtime.getRelatedArtifactsPayload(rawTaskId || undefined), null, 2);
+  }
+
+  if (trimmed === "/timeline") {
+    return runTimeline(await runtime.getTimelinePayload());
+  }
+
+  if (trimmed === "/timeline-json") {
+    return JSON.stringify(await runtime.getTimelinePayload(), null, 2);
   }
 
   if (trimmed === "/config-init-openai-codex") {
@@ -481,6 +500,7 @@ export async function main(): Promise<void> {
     input === "/web-smoke-json" ||
     input === "/web-verify-json" ||
     input === "/artifacts-json" ||
+    input.startsWith("/artifacts-related-json") ||
     input === "/advance-json" ||
     input === "/blocked-json" ||
     input === "/continue-json" ||
@@ -500,7 +520,8 @@ export async function main(): Promise<void> {
     input.startsWith("/find-json") ||
     input.startsWith("/grep-json") ||
     input.startsWith("/recent-json") ||
-    input.startsWith("/artifacts-json");
+    input.startsWith("/artifacts-json") ||
+    input === "/timeline-json";
   process.stdout.write(
     shouldShowOnlyPanel ? `${panel}\n` : shouldHidePanel ? `${output}\n` : `${output}\n\n${panel}\n`
   );

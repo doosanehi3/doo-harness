@@ -256,6 +256,27 @@ test("artifacts-json can filter by artifact type", async () => {
   }
 });
 
+test("artifacts-json returns newest artifacts first by updatedAt", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-artifacts-order-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI artifacts order demo", true);
+    await runtime.executeCurrentTask();
+    await runtime.verify();
+    await runtime.review();
+
+    const output = await runCli(cwd, "/artifacts-json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as Array<{ updatedAt: string }>;
+
+    assert.ok(parsed.length > 1);
+    for (let index = 1; index < parsed.length; index += 1) {
+      assert.ok((parsed[index - 1]?.updatedAt ?? "") >= (parsed[index]?.updatedAt ?? ""));
+    }
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("artifacts-json rejects invalid artifact filters instead of broadening scope", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-artifacts-invalid-filter-"));
   try {
@@ -1005,6 +1026,75 @@ test("pickup-json reports the next safe work recommendation", async () => {
     assert.equal(parsed.pickupKind, "active-task");
     assert.equal(parsed.target, "T1");
     assert.match(parsed.nextAction ?? "", /\/continue/);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("artifacts related json reports active-task related artifacts", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-related-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI related artifacts demo", true);
+    await runtime.executeCurrentTask();
+    await runtime.verify();
+
+    const output = await runCli(cwd, "artifacts", "related", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      targetTaskId: string | null;
+      items: Array<{ type: string; path: string }>;
+    };
+
+    assert.equal(parsed.mode, "related");
+    assert.equal(parsed.targetTaskId, "T1");
+    assert.ok(parsed.items.some(item => item.type === "task-output"));
+    assert.ok(parsed.items.some(item => item.type === "verification"));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("artifacts related <taskId> --json stays machine-readable on the CLI path", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-related-explicit-task-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI explicit related artifacts demo", true);
+    await runtime.executeCurrentTask();
+    await runtime.verify();
+
+    const output = await runCli(cwd, "artifacts", "related", "T1", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      targetTaskId: string | null;
+      items: Array<{ path: string }>;
+    };
+
+    assert.equal(parsed.mode, "related");
+    assert.equal(parsed.targetTaskId, "T1");
+    assert.ok(parsed.items.length > 0);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("timeline-json reports runtime and artifact timeline events", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-timeline-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI timeline demo", true);
+    await runtime.executeCurrentTask();
+    await runtime.verify();
+
+    const output = await runCli(cwd, "timeline", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      items: Array<{ kind: string; label: string }>;
+    };
+
+    assert.equal(parsed.mode, "timeline");
+    assert.ok(parsed.items.some(item => item.kind === "runtime"));
+    assert.ok(parsed.items.some(item => item.kind === "artifact"));
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

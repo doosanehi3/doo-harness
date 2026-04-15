@@ -87,6 +87,22 @@ function formatWidgetFromPayload(payload: unknown): string[] | null {
     ];
   }
 
+  if (value.mode === "related" && Array.isArray(value.items)) {
+    return [
+      "Harness Related",
+      `Task: ${typeof value.targetTaskId === "string" ? value.targetTaskId : "-"}`,
+      ...(value.items as Array<{ path?: string }>).slice(0, 4).map(item => item.path ?? "-")
+    ];
+  }
+
+  if (value.mode === "timeline" && Array.isArray(value.items)) {
+    return [
+      "Harness Timeline",
+      `Phase: ${typeof value.phase === "string" ? value.phase : "-"}`,
+      ...(value.items as Array<{ label?: string }>).slice(0, 4).map(item => item.label ?? "-")
+    ];
+  }
+
   if (typeof value.phase === "string") {
     const recentArtifacts = Array.isArray(value.recentArtifacts) ? (value.recentArtifacts as string[]).slice(0, 2) : [];
     return [
@@ -130,6 +146,12 @@ function summarize(input: string, output: string): string {
   }
   if (payload && payload.mode === "pickup") {
     return `Harness pickup: ${typeof payload.pickupKind === "string" ? payload.pickupKind : "ready"}`;
+  }
+  if (payload && payload.mode === "related" && Array.isArray(payload.items)) {
+    return `Harness related: ${payload.items.length} item(s)`;
+  }
+  if (payload && payload.mode === "timeline" && Array.isArray(payload.items)) {
+    return `Harness timeline: ${payload.items.length} event(s)`;
   }
   if (payload && typeof payload.phase === "string") {
     const task = typeof payload.activeTaskId === "string" ? ` ${payload.activeTaskId}` : "";

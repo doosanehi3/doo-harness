@@ -1,5 +1,6 @@
 import { join, relative } from "node:path";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { Agent, createBashTool, createDefaultCodingTools } from "@doo/harness-agent-core";
 import {
@@ -149,6 +150,39 @@ export interface PickupPayload {
   readyTasks: string[];
   pendingDependencies: string[];
   blocker: string | null;
+}
+
+export interface RelatedArtifactEntry {
+  kind: "artifact" | "task-output";
+  type: string;
+  path: string;
+  reason: string;
+}
+
+export interface RelatedArtifactsPayload {
+  mode: "related";
+  targetTaskId: string | null;
+  targetTaskText: string | null;
+  phase: string;
+  items: RelatedArtifactEntry[];
+  summary: string;
+}
+
+export interface TimelineEntry {
+  kind: "runtime" | "artifact" | "blocker";
+  timestamp: string;
+  label: string;
+  detail: string;
+  path: string | null;
+}
+
+export interface TimelinePayload {
+  mode: "timeline";
+  phase: string;
+  activeTaskId: string | null;
+  activeTaskText: string | null;
+  items: TimelineEntry[];
+  summary: string;
 }
 
 export interface CompletionLoopResult {
@@ -1163,6 +1197,127 @@ export class HarnessRuntime {
       readyTasks: status.readyTasks,
       pendingDependencies: status.pendingDependencies,
       blocker: status.blocker
+    };
+  }
+
+  getRelatedArtifactsPayload(taskId: string | null = this.session.taskState.activeTaskId ?? this.session.state.activeTaskId): RelatedArtifactsPayload {
+    const status = this.getStatus();
+    const items: RelatedArtifactEntry[] = [];
+    const seen = new Set<string>();
+    const push = (entry: RelatedArtifactEntry) => {
+      if (seen.has(entry.path)) {
+        return;
+      }
+      seen.add(entry.path);
+      items.push(entry);
+    };
+
+    if (status.activeSpecPath) {
+      push({ kind: "artifact", type: "spec", path: status.activeSpecPath, reason: "active spec" });
+    }
+    if (status.activePlanPath) {
+      push({ kind: "artifact", type: "plan", path: status.activePlanPath, reason: "active plan" });
+    }
+
+    const milestonePath = join(this.session.cwd, ".harness", "artifacts", "milestones.md");
+    if (existsSync(milestonePath)) {
+      push({ kind: "artifact", type: "milestones", path: milestonePath, reason: "active milestone ledger" });
+    }
+
+    if (taskId && this.session.taskState.taskOutputs[taskId]) {
+      push({
+        kind: "task-output",
+        type: "task-output",
+        path: this.session.taskState.taskOutputs[taskId]!,
+        reason: "active task output"
+      });
+    }
+
+    if (this.session.state.lastVerificationPath) {
+      push({
+        kind: "artifact",
+        type: "verification",
+        path: this.session.state.lastVerificationPath,
+        reason: "latest verification"
+      });
+    }
+    if (this.session.state.lastReviewPath) {
+      push({
+        kind: "artifact",
+        type: "review",
+        path: this.session.state.lastReviewPath,
+        reason: "latest review"
+      });
+    }
+    if (this.session.state.lastHandoffPath) {
+      push({
+        kind: "artifact",
+        type: "handoff",
+        path: this.session.state.lastHandoffPath,
+        reason: "latest handoff"
+      });
+    }
+
+    const taskStatePath = join(this.session.cwd, ".harness", "artifacts", "task-state.json");
+    if (existsSync(taskStatePath)) {
+      push({ kind: "artifact", type: "task_state", path: taskStatePath, reason: "runtime task ledger" });
+    }
+
+    return {
+      mode: "related",
+      targetTaskId: taskId,
+      targetTaskText: taskId ? this.session.taskState.taskTexts[taskId] ?? null : null,
+      phase: status.phase,
+      items,
+      summary: items.length > 0 ? `${items.length} related artifact(s).` : "No related artifacts found."
+    };
+  }
+
+  async getTimelinePayload(): Promise<TimelinePayload> {
+    const status = this.getStatus();
+    const artifacts = await this.listArtifacts();
+    const items: TimelineEntry[] = [
+      {
+        kind: "runtime",
+        timestamp: this.session.state.updatedAt,
+        label: `runtime phase=${status.phase}`,
+        detail: status.nextAction,
+        path: null
+      }
+    ];
+
+    if (status.blocker) {
+      items.push({
+        kind: "blocker",
+        timestamp: this.session.state.updatedAt,
+        label: "blocker",
+        detail: status.blocker,
+        path: null
+      });
+    }
+
+    for (const artifact of artifacts.slice(0, 8)) {
+      items.push({
+        kind: "artifact",
+        timestamp: artifact.updatedAt,
+        label: artifact.type,
+        detail:
+          artifact.relatedTaskId || artifact.relatedPhase
+            ? [artifact.relatedTaskId ? `task=${artifact.relatedTaskId}` : null, artifact.relatedPhase ? `phase=${artifact.relatedPhase}` : null]
+                .filter(Boolean)
+                .join(" ")
+            : "artifact update",
+        path: artifact.path
+      });
+    }
+
+    return {
+      mode: "timeline",
+      phase: status.phase,
+      activeTaskId: status.activeTaskId,
+      activeTaskText: status.activeTaskText,
+      items: items.sort((left, right) => right.timestamp.localeCompare(left.timestamp)),
+      summary: `${items.length} timeline event(s).`
     };
   }
 

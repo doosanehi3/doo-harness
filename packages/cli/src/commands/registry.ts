@@ -19,6 +19,7 @@ export const COMMANDS = [
   "advance",
   "status",
   "artifacts",
+  "timeline",
   "pickup",
   "queue",
   "handoff",

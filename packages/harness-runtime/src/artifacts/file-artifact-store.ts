@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ArtifactMeta, ArtifactType } from "./types.js";
@@ -63,31 +63,34 @@ export class FileArtifactStore implements ArtifactStore {
         const entries = await readdir(absolute, { withFileTypes: true });
         for (const entry of entries) {
           if (!entry.isFile()) continue;
+          const filePath = join(absolute, entry.name);
+          const meta = await stat(filePath);
           metas.push({
             id: `${type}-${entry.name}`,
             type,
-            path: join(absolute, entry.name),
+            path: filePath,
             sessionId,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
+            createdAt: meta.birthtime.toISOString(),
+            updatedAt: meta.mtime.toISOString()
           });
         }
       } else {
+        const meta = await stat(absolute);
         metas.push({
           id: `${type}-${target}`,
           type,
           path: absolute,
           sessionId,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
+          createdAt: meta.birthtime.toISOString(),
+          updatedAt: meta.mtime.toISOString()
         });
       }
     }
-    return metas.sort((a, b) => a.path.localeCompare(b.path));
+    return metas.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
   async latest(sessionId: string, type: ArtifactType): Promise<ArtifactMeta | null> {
     const metas = (await this.list(sessionId)).filter(meta => meta.type === type);
-    return metas.length === 0 ? null : metas[metas.length - 1];
+    return metas.length === 0 ? null : metas[0];
   }
 }

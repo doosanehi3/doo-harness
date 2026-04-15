@@ -22,7 +22,12 @@ export function normalizeCommandTokens(tokens: string[]): string {
       }
       return json ? "/status-json" : "/status";
     case "artifacts":
+      if (payload[0] === "related") {
+        return json ? join("/artifacts-related-json", payload.slice(1)) : join("/artifacts-related", payload.slice(1));
+      }
       return json ? join("/artifacts-json", payload) : join("/artifacts", payload);
+    case "timeline":
+      return json ? "/timeline-json" : "/timeline";
     case "plan":
       return json ? join("/plan-json", payload) : join("/plan", payload);
     case "longrun":

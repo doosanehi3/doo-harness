@@ -172,6 +172,35 @@ test("pi-hosted bridge exposes blocked, queue, and pickup entrypoints", async ()
   }
 });
 
+test("pi-hosted bridge exposes related artifacts and timeline entrypoints", async () => {
+  const cwd = await createTempHarnessDir();
+  try {
+    const bridge = createPiHostedHarnessBridge({ cwd });
+    const runtime = await bridge.getRuntime();
+    await runtime.plan("Hosted timeline demo", true);
+    await runtime.executeCurrentTask();
+    await runtime.verify();
+
+    const relatedOutput = await bridge.execute("artifacts related --json");
+    const related = JSON.parse(relatedOutput) as {
+      mode: string;
+      items: Array<{ type: string }>;
+    };
+    assert.equal(related.mode, "related");
+    assert.ok(related.items.some(item => item.type === "verification"));
+
+    const timelineOutput = await bridge.execute("timeline --json");
+    const timeline = JSON.parse(timelineOutput) as {
+      mode: string;
+      items: Array<{ kind: string }>;
+    };
+    assert.equal(timeline.mode, "timeline");
+    assert.ok(timeline.items.some(item => item.kind === "runtime"));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("pi-hosted bridge accepts slash-form compact status and rejects invalid artifact filters", async () => {
   const cwd = await createTempHarnessDir();
   try {

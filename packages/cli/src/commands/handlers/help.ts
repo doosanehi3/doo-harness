@@ -17,7 +17,8 @@ export function buildHelpPayload(): HelpPayload {
       "Start work: harness plan <goal> or harness longrun <goal>",
       "Drive the operator loop: harness help, harness status, harness status compact, harness verify, harness handoff, harness reset, harness resume",
       "Review or relocate context: harness review quick|diff|deep, harness find <name>, harness grep <text>, harness recent review",
-      "Operational entrypoints: harness blocked, harness queue review, harness pickup"
+      "Operational entrypoints: harness blocked, harness queue review, harness pickup",
+      "Artifact inspection: harness artifacts [type], harness artifacts related, harness timeline"
     ],
     commandGroups: [
       {
@@ -56,6 +57,14 @@ export function buildHelpPayload(): HelpPayload {
           "harness grep [--json] <content-query>",
           "harness artifacts [--json] [type]",
           "harness recent [--json] review|verification|handoff"
+        ]
+      },
+      {
+        title: "Artifacts and Timeline",
+        commands: [
+          "harness artifacts [--json] [type]",
+          "harness artifacts related [--json] [taskId]",
+          "harness timeline [--json]"
         ]
       },
       {

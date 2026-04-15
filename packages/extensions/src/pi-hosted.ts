@@ -1,6 +1,7 @@
 import { createPiSubstrateAdapter, type PiSubstrateAdapter } from "../../ai/src/index.js";
 import { HarnessRuntime } from "../../harness-runtime/src/index.js";
 import { formatInvalidArtifactFilter, parseArtifactFilter, runArtifacts } from "../../cli/src/commands/handlers/artifacts.js";
+import { runRelatedArtifacts, runTimeline } from "../../cli/src/commands/handlers/artifact-browser.js";
 import { runContinue } from "../../cli/src/commands/handlers/continue.js";
 import { runBlocked, runPickup, runQueue } from "../../cli/src/commands/handlers/entrypoints.js";
 import { buildHelpPayload, runHelp } from "../../cli/src/commands/handlers/help.js";
@@ -75,6 +76,20 @@ async function executeHostedCommand(runtime: HarnessRuntime, cwd: string, input:
     }
     const artifacts = await runtime.listArtifacts();
     return JSON.stringify(filter ? artifacts.filter(artifact => artifact.type === filter) : artifacts, null, 2);
+  }
+  if (trimmed === "/artifacts-related" || trimmed.startsWith("/artifacts-related ")) {
+    const rawTaskId = trimmed.replace(/^\/artifacts-related\s*/, "").trim();
+    return runRelatedArtifacts(runtime.getRelatedArtifactsPayload(rawTaskId || undefined));
+  }
+  if (trimmed === "/artifacts-related-json" || trimmed.startsWith("/artifacts-related-json ")) {
+    const rawTaskId = trimmed.replace(/^\/artifacts-related-json\s*/, "").trim();
+    return JSON.stringify(runtime.getRelatedArtifactsPayload(rawTaskId || undefined), null, 2);
+  }
+  if (trimmed === "/timeline") {
+    return runTimeline(await runtime.getTimelinePayload());
+  }
+  if (trimmed === "/timeline-json") {
+    return JSON.stringify(await runtime.getTimelinePayload(), null, 2);
   }
   if (trimmed.startsWith("/plan-json")) {
     const goal = trimmed.replace(/^\/plan-json\s*/, "").trim();
