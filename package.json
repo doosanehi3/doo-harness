@@ -12,6 +12,8 @@
   "scripts": {
     "check": "tsc -p tsconfig.json --pretty false",
     "dev": "node --import tsx packages/cli/src/main.ts",
+    "smoke:pi:install": "node scripts/pi-smoke.mjs install",
+    "smoke:pi:print": "node scripts/pi-smoke.mjs print",
     "start": "node --import tsx bin/harness.js",
     "test": "node --import tsx --test tests/**/*.test.ts"
   },

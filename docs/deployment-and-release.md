@@ -21,6 +21,20 @@ Still product work, not architecture work:
 - real user installation polish
 - release checklist discipline
 
+## Distribution Decision
+
+Current distribution strategy is:
+
+- **local path install first**
+- **git/source distribution second**
+- **no npm publish yet**
+
+Rationale:
+
+- local and source-based installs are the only paths verified end-to-end today
+- the package contract is still source-based
+- scriptable smoke and interactive release validation still need stabilization
+
 ## Completion Tasks
 
 ### 1. Package metadata and installability
@@ -31,7 +45,9 @@ Still product work, not architecture work:
 - [x] choose source-based extension loading as the current install contract
 - [x] decide not to publish to npm yet; use local-path or git-based install until
   the package contract stabilizes
-- [ ] decide whether a later published contract should switch to dist-based artifacts
+- [x] decide to keep source-based distribution as the current official contract;
+  revisit dist-based artifacts only after package extraction or a dedicated
+  publish pipeline exists
 
 ### 2. User-facing install UX
 
@@ -39,7 +55,7 @@ Still product work, not architecture work:
 - [x] document local `pi install -l` package path
 - [x] validate print-mode smoke manually
 - [x] validate install-from-path flow manually
-- [ ] stabilize scriptable print/install smoke for release automation
+- [x] stabilize scriptable print/install smoke for release automation
 - [x] document expected behavior in a fresh machine setup
 - [x] document failure modes when `pi` is absent from PATH
 
@@ -55,10 +71,12 @@ Still product work, not architecture work:
 - [x] `pnpm run check`
 - [x] `pnpm run test`
 - [x] real pi CLI smoke in print mode
+- [x] scriptable print-mode smoke
+- [x] scriptable install-from-path smoke
 - [x] install-from-path smoke script
 - [x] interactive pi session launch and slash-command acceptance smoke
 - [ ] interactive widget/notification rendering capture
-- [ ] run install-from-path smoke as a release gate in CI or release process
+- [x] define print/install smoke as required release-gate commands
 
 ## Recommended Next Release Gate
 
@@ -66,8 +84,8 @@ Before calling the package shippable:
 
 1. run `pnpm run check`
 2. run `pnpm run test`
-3. run real pi print-mode smoke manually
-4. run install-from-path smoke manually
+3. run `pnpm run smoke:pi:print`
+4. run `pnpm run smoke:pi:install`
 5. run interactive pi session smoke
 6. verify widget rendering and `/harness` command visibility
 7. record release note summary
@@ -76,8 +94,6 @@ Before calling the package shippable:
 
 - The main product architecture is no longer the blocker.
 - Remaining work is packaging, documentation, and release discipline.
-- Scriptable print/install smoke is still flaky and should be treated as a
-  stabilization task, not a release-blocking invariant yet.
 
 ## Fresh Machine Expectations
 
@@ -119,6 +135,8 @@ Current policy:
 - supported install paths today are:
   - local path install
   - git/package source install once the repository distribution path is chosen
+- release automation should treat `pnpm run smoke:pi:print` and
+  `pnpm run smoke:pi:install` as the default non-interactive package checks
 
 Versioning guidance:
 

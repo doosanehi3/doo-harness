@@ -12,6 +12,9 @@
     "pi-coding-agent",
     "runtime"
   ],
+  "publishConfig": {
+    "access": "restricted"
+  },
   "files": [
     "src",
     "dist",

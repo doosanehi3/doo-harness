@@ -22,6 +22,16 @@ through the `pi.extensions` manifest in
 This is intentional for now. It keeps the package simple while the product is
 still converging. A later published contract may switch to `dist` artifacts.
 
+## Distribution Policy
+
+Current policy:
+
+- do **not** publish this package to npm yet
+- treat local-path install and future git-based install as the supported
+  distribution paths
+- revisit npm publishing only after scriptable smoke and interactive release
+  validation are stable
+
 ## Local Smoke
 
 One-off load:
