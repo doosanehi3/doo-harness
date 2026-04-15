@@ -943,6 +943,93 @@ test("review diff and deep expose richer mode-specific payloads", async () => {
   }
 });
 
+test("review history json exposes recent review-related artifacts", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-review-history-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI review history demo", true);
+    await runtime.executeCurrentTask();
+    await runtime.verify();
+    await runtime.review();
+
+    const output = await runCli(cwd, "review", "history", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      target: string;
+      history: string[];
+    };
+
+    assert.equal(parsed.mode, "history");
+    assert.equal(parsed.target, "review-history");
+    assert.ok(parsed.history.some(item => item.includes("review:")));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("review artifact json inspects the selected artifact target", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-review-artifact-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI review artifact demo", true);
+    await runtime.executeCurrentTask();
+    const verification = await runtime.verify();
+
+    const output = await runCli(cwd, "review", "artifact", "verification", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      target: string;
+      path: string;
+      preview: string[];
+    };
+
+    assert.equal(parsed.mode, "artifact");
+    assert.equal(parsed.target, "artifact:verification");
+    assert.match(parsed.path, /verifications\/.+\.md$/);
+    assert.ok(parsed.preview.length > 0);
+
+    const relativeVerificationPath = verification.path.replace(`${cwd}/`, "");
+    const byRelativePathOutput = await runCli(cwd, "review", "artifact", relativeVerificationPath, "--json");
+    const byRelativePathParsed = JSON.parse(extractJsonPayload(byRelativePathOutput)) as {
+      mode: string;
+      path: string;
+    };
+    assert.equal(byRelativePathParsed.mode, "artifact");
+    assert.equal(byRelativePathParsed.path, verification.path);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("review diff can narrow to a target path", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-review-diff-target-"));
+  try {
+    await execFileAsync("git", ["init"], { cwd });
+    await writeFile(join(cwd, "target-a.md"), "# target a\n", "utf8");
+    await writeFile(join(cwd, "target-a.md.bak"), "# target a backup\n", "utf8");
+    await writeFile(join(cwd, "target-b.md"), "# target b\n", "utf8");
+
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI review diff target demo", true);
+    await runtime.executeCurrentTask();
+    await runtime.verify();
+
+    const output = await runCli(cwd, "review", "diff", "target-a.md", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      target: string;
+      diffStat: string[];
+    };
+
+    assert.equal(parsed.mode, "diff");
+    assert.equal(parsed.target, "working-tree-diff:target-a.md");
+    assert.ok(parsed.diffStat.every(line => line.includes("target-a.md")));
+    assert.ok(parsed.diffStat.every(line => !line.includes("target-a.md.bak")));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("find-json returns a machine-readable file search payload", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-find-"));
   try {

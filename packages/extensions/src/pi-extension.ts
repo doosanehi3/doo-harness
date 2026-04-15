@@ -39,6 +39,14 @@ function formatWidgetFromPayload(payload: unknown): string[] | null {
     ];
   }
 
+  if (value.mode === "history" && Array.isArray(value.history)) {
+    return [
+      "Harness Review History",
+      `Items: ${(value.history as string[]).length}`,
+      ...(value.history as string[]).slice(0, 4)
+    ];
+  }
+
   if (typeof value.path === "string" && Array.isArray(value.preview)) {
     return [
       `Harness Review${typeof value.mode === "string" ? ` (${value.mode})` : ""}`,

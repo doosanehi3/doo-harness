@@ -21,7 +21,7 @@ import { runProviderSmoke } from "./commands/handlers/provider-smoke.js";
 import { buildRecentPayload, runRecent } from "./commands/handlers/recent.js";
 import { buildBootstrapPayload, buildDoctorPayload, formatInvalidBootstrapPreset, parseBootstrapPreset, runBootstrap, runDoctor } from "./commands/handlers/onboarding.js";
 import { runReset } from "./commands/handlers/reset.js";
-import { buildReviewPayload, runReview, type ReviewMode } from "./commands/handlers/review.js";
+import { buildArtifactReviewPayload, buildReviewHistoryPayload, buildReviewPayload, runReview, type ReviewMode } from "./commands/handlers/review.js";
 import { buildFindPayload, buildGrepPayload, buildRecentSearchPayload, runSearch } from "./commands/handlers/search.js";
 import { runResume } from "./commands/handlers/resume.js";
 import { buildCompactStatusView, buildStatusView, runCompactStatus, runStatus } from "./commands/handlers/status.js";
@@ -400,28 +400,55 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
   }
 
   if (trimmed === "/review" || trimmed.startsWith("/review ")) {
-    const rawMode = trimmed.replace(/^\/review\s*/, "").trim();
-    const mode: ReviewMode = rawMode === "diff" || rawMode === "deep" ? rawMode : "quick";
+    const raw = trimmed.replace(/^\/review\s*/, "").trim();
+    const [subcommand, ...rest] = raw.split(/\s+/).filter(Boolean);
+    const artifacts = await runtime.listArtifacts();
+    if (subcommand === "history") {
+      return runReview(buildReviewHistoryPayload(artifacts, runtime.getStatus()));
+    }
+    if (subcommand === "artifact") {
+      return runReview(await buildArtifactReviewPayload(rest.join(" "), artifacts, runtime.getStatus()));
+    }
+    const mode: ReviewMode = subcommand === "diff" || subcommand === "deep" ? subcommand : "quick";
+    const target = mode === "diff" ? rest.join(" ") || null : null;
     const path = await runtime.review();
     return runReview(
       await buildReviewPayload(path, runtime.getStatus(), {
         mode,
         cwd: runtimeCwd,
-        artifacts: await runtime.listArtifacts()
+        artifacts,
+        target
       })
     );
   }
 
   if (trimmed === "/review-json" || trimmed.startsWith("/review-json ")) {
-    const rawMode = trimmed.replace(/^\/review-json\s*/, "").trim();
-    const mode: ReviewMode = rawMode === "diff" || rawMode === "deep" ? rawMode : "quick";
+    const raw = trimmed.replace(/^\/review-json\s*/, "").trim();
+    const [subcommand, ...rest] = raw.split(/\s+/).filter(Boolean);
+    const artifacts = await runtime.listArtifacts();
+    if (subcommand === "history") {
+      return JSON.stringify({ ...buildReviewHistoryPayload(artifacts, runtime.getStatus()), status: runtime.getStatus() }, null, 2);
+    }
+    if (subcommand === "artifact") {
+      return JSON.stringify(
+        {
+          ...(await buildArtifactReviewPayload(rest.join(" "), artifacts, runtime.getStatus())),
+          status: runtime.getStatus()
+        },
+        null,
+        2
+      );
+    }
+    const mode: ReviewMode = subcommand === "diff" || subcommand === "deep" ? subcommand : "quick";
+    const target = mode === "diff" ? rest.join(" ") || null : null;
     const path = await runtime.review();
     return JSON.stringify(
       {
         ...(await buildReviewPayload(path, runtime.getStatus(), {
           mode,
           cwd: runtimeCwd,
-          artifacts: await runtime.listArtifacts()
+          artifacts,
+          target
         })),
         status: runtime.getStatus()
       },

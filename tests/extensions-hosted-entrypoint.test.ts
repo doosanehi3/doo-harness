@@ -1,9 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { createPiHostedHarnessBridge } from "../packages/extensions/src/index.js";
+
+const execFileAsync = promisify(execFile);
 
 async function createTempHarnessDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "doo-harness-extension-host-"));
@@ -116,6 +120,67 @@ test("pi-hosted bridge exposes review and search surfaces", async () => {
 
     assert.equal(search.mode, "recent");
     assert.ok(search.matches.some(line => line.includes("/reviews/")));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("pi-hosted bridge exposes review history and review artifact surfaces", async () => {
+  const cwd = await createTempHarnessDir();
+  try {
+    const bridge = createPiHostedHarnessBridge({ cwd });
+    const runtime = await bridge.getRuntime();
+    await runtime.plan("Hosted review history demo", true);
+    await runtime.executeCurrentTask();
+    await runtime.verify();
+    await runtime.review();
+
+    const historyOutput = await bridge.execute("review history --json");
+    const history = JSON.parse(historyOutput) as {
+      mode: string;
+      history: string[];
+    };
+    assert.equal(history.mode, "history");
+    assert.ok(history.history.length > 0);
+
+    const artifactOutput = await bridge.execute("review artifact verification --json");
+    const artifact = JSON.parse(artifactOutput) as {
+      mode: string;
+      target: string;
+      preview: string[];
+    };
+    assert.equal(artifact.mode, "artifact");
+    assert.equal(artifact.target, "artifact:verification");
+    assert.ok(artifact.preview.length > 0);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("pi-hosted bridge keeps targeted review diff json aligned with the CLI surface", async () => {
+  const cwd = await createTempHarnessDir();
+  try {
+    await execFileAsync("git", ["init"], { cwd });
+    await writeFile(join(cwd, "target-a.md"), "# target a\n", "utf8");
+    await writeFile(join(cwd, "target-a.md.bak"), "# target a backup\n", "utf8");
+
+    const bridge = createPiHostedHarnessBridge({ cwd });
+    const runtime = await bridge.getRuntime();
+    await runtime.plan("Hosted review diff target demo", true);
+    await runtime.executeCurrentTask();
+    await runtime.verify();
+
+    const output = await bridge.execute("review diff target-a.md --json");
+    const parsed = JSON.parse(output) as {
+      mode: string;
+      target: string;
+      diffStat: string[];
+    };
+
+    assert.equal(parsed.mode, "diff");
+    assert.equal(parsed.target, "working-tree-diff:target-a.md");
+    assert.ok(parsed.diffStat.every(line => line.includes("target-a.md")));
+    assert.ok(parsed.diffStat.every(line => !line.includes("target-a.md.bak")));
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

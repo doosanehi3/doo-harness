@@ -16,7 +16,7 @@ export function buildHelpPayload(): HelpPayload {
       "Run onboarding checks: harness doctor, harness provider check, harness provider doctor",
       "Start work: harness plan <goal> or harness longrun <goal>",
       "Drive the operator loop: harness help, harness status, harness status compact, harness verify, harness handoff, harness reset, harness resume",
-      "Review or relocate context: harness review quick|diff|deep, harness find <name>, harness grep <text>, harness recent review",
+      "Review or relocate context: harness review quick|diff|deep|history|artifact, harness find <name>, harness grep <text>, harness recent review",
       "Operational entrypoints: harness blocked, harness queue review, harness pickup",
       "Artifact inspection: harness artifacts [type], harness artifacts related, harness timeline",
       "Bootstrap presets: harness bootstrap"
@@ -54,6 +54,8 @@ export function buildHelpPayload(): HelpPayload {
           "harness review quick [--json]",
           "harness review diff [--json]",
           "harness review deep [--json]",
+          "harness review history [--json]",
+          "harness review artifact [--json] <type|path>",
           "harness find [--json] <file-query>",
           "harness grep [--json] <content-query>",
           "harness artifacts [--json] [type]",

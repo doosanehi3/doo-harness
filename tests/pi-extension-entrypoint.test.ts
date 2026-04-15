@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createPiHostedHarnessBridge } from "../packages/extensions/src/index.js";
 import harnessPiExtension from "../packages/extensions/src/pi-extension.js";
 
 async function createTempHarnessDir(): Promise<string> {
@@ -92,6 +93,80 @@ test("pi extension formats doctor results into widget and notification output", 
 
     assert.ok(notifications.some(message => /Harness doctor:/i.test(message)));
     assert.ok(widgetUpdates.some(lines => lines[0] === "Harness Doctor"));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("pi extension formats review history into widget and notification output", async () => {
+  const cwd = await createTempHarnessDir();
+  const notifications: string[] = [];
+  const widgetUpdates: string[][] = [];
+  let handler: ((args: string, ctx: any) => Promise<void> | void) | null = null;
+
+  try {
+    harnessPiExtension({
+      registerCommand(_name, options) {
+        handler = options.handler;
+      }
+    });
+
+    assert.ok(handler);
+    await handler!("review history --json", {
+      cwd,
+      hasUI: true,
+      ui: {
+        notify(message: string) {
+          notifications.push(message);
+        },
+        setWidget(_key: string, content: string[] | undefined) {
+          widgetUpdates.push(content ?? []);
+        }
+      }
+    });
+
+    assert.ok(notifications.some(message => /Harness review history ready|Harness review/i.test(message)));
+    assert.ok(widgetUpdates.some(lines => lines[0] === "Harness Review History"));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("pi extension formats review artifact into widget and notification output", async () => {
+  const cwd = await createTempHarnessDir();
+  const notifications: string[] = [];
+  const widgetUpdates: string[][] = [];
+  let handler: ((args: string, ctx: any) => Promise<void> | void) | null = null;
+
+  try {
+    const bridge = createPiHostedHarnessBridge({ cwd });
+    const runtime = await bridge.getRuntime();
+    await runtime.plan("Pi extension artifact review demo", true);
+    await runtime.executeCurrentTask();
+    await runtime.verify();
+
+    harnessPiExtension({
+      registerCommand(_name, options) {
+        handler = options.handler;
+      }
+    });
+
+    assert.ok(handler);
+    await handler!("review artifact verification --json", {
+      cwd,
+      hasUI: true,
+      ui: {
+        notify(message: string) {
+          notifications.push(message);
+        },
+        setWidget(_key: string, content: string[] | undefined) {
+          widgetUpdates.push(content ?? []);
+        }
+      }
+    });
+
+    assert.ok(notifications.some(message => /Harness review artifact ready|Harness review/i.test(message)));
+    assert.ok(widgetUpdates.some(lines => lines[0] === "Harness Review (artifact)"));
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
