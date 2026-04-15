@@ -306,6 +306,7 @@ test("pi extension formats pickup entrypoint results into widget and notificatio
 
     assert.ok(notifications.some(message => /Harness pickup:/i.test(message)));
     assert.ok(widgetUpdates.some(lines => lines[0] === "Harness Pickup"));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Why:"))));
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

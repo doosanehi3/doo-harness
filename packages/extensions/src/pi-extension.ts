@@ -72,8 +72,8 @@ function formatWidgetFromPayload(payload: unknown): string[] | null {
     return [
       "Harness Blocked",
       `Phase: ${typeof value.phase === "string" ? value.phase : "-"}`,
-      ...(value.items as Array<{ taskId?: string; blocker?: string }>).slice(0, 4).map(
-        item => `${item.taskId ?? "-"}: ${item.blocker ?? "-"}`
+      ...(value.items as Array<{ taskId?: string; blocker?: string; recoveryRecommendation?: string }>).slice(0, 4).map(
+        item => `${item.taskId ?? "-"}: ${item.blocker ?? "-"} :: ${item.recoveryRecommendation ?? "-"}`
       )
     ];
   }
@@ -82,7 +82,9 @@ function formatWidgetFromPayload(payload: unknown): string[] | null {
     return [
       "Harness Queue",
       `Queue: ${typeof value.queue === "string" ? value.queue : "-"}`,
-      ...(value.items as Array<{ label?: string }>).slice(0, 4).map(item => item.label ?? "-")
+      ...(value.items as Array<{ label?: string; priority?: string }>).slice(0, 4).map(
+        item => `${item.priority ?? "-"}: ${item.label ?? "-"}`
+      )
     ];
   }
 
@@ -91,6 +93,7 @@ function formatWidgetFromPayload(payload: unknown): string[] | null {
       "Harness Pickup",
       `Kind: ${typeof value.pickupKind === "string" ? value.pickupKind : "-"}`,
       `Target: ${typeof value.target === "string" ? value.target : "-"}`,
+      `Why: ${typeof value.rationale === "string" ? value.rationale : "-"}`,
       `Next: ${typeof value.nextAction === "string" ? value.nextAction : "-"}`
     ];
   }

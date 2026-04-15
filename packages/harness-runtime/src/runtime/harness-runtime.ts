@@ -111,6 +111,7 @@ export interface BlockedEntry {
   taskText: string | null;
   blocker: string;
   recoveryHint: string | null;
+  recoveryRecommendation: string;
   milestoneId: string | null;
 }
 
@@ -125,7 +126,9 @@ export interface BlockedPayload {
 
 export interface QueueEntry {
   kind: "task" | "artifact";
+  priority: "high" | "medium" | "low";
   label: string;
+  rationale: string;
   detail: string;
 }
 
@@ -146,6 +149,7 @@ export interface PickupPayload {
   activeTaskId: string | null;
   activeTaskText: string | null;
   target: string | null;
+  rationale: string;
   nextAction: string | null;
   readyTasks: string[];
   pendingDependencies: string[];
@@ -1111,6 +1115,12 @@ export class HarnessRuntime {
         taskText: this.session.taskState.taskTexts[taskId] ?? null,
         blocker: this.session.taskState.taskBlockers[taskId] ?? "unknown blocker",
         recoveryHint: this.session.taskState.taskRecoveryHints[taskId] ?? null,
+        recoveryRecommendation:
+          this.session.taskState.taskRecoveryHints[taskId] === "manual_output_required"
+            ? "Generate the missing task output, then rerun verification."
+            : this.session.taskState.taskRecoveryHints[taskId] === "implementation_no_changes"
+              ? "Return to implementation and make concrete repo changes before retrying."
+              : "Inspect the blocker and use /continue or /unblock when the dependency is resolved.",
         milestoneId: this.session.taskState.taskMilestones[taskId] ?? null
       }));
 
@@ -1127,21 +1137,32 @@ export class HarnessRuntime {
   async getReviewQueuePayload(): Promise<QueuePayload> {
     const status = this.getStatus();
     const items: QueueEntry[] = [];
+    const seenTaskLabels = new Set<string>();
 
     if (status.activeTaskId && this.session.taskState.tasks[status.activeTaskId] === "validated") {
+      const label = `${status.activeTaskId} ${status.activeTaskText ?? ""}`.trim();
       items.push({
         kind: "task",
-        label: `${status.activeTaskId} ${status.activeTaskText ?? ""}`.trim(),
+        priority: "high",
+        label,
+        rationale: "validated active task is ready for operator review",
         detail: status.nextAction
       });
+      seenTaskLabels.add(label);
     }
 
     if (status.phase === "reviewing" && status.activeTaskId) {
-      items.push({
-        kind: "task",
-        label: `${status.activeTaskId} ${status.activeTaskText ?? ""}`.trim(),
-        detail: "Runtime is currently in reviewing phase."
-      });
+      const label = `${status.activeTaskId} ${status.activeTaskText ?? ""}`.trim();
+      if (!seenTaskLabels.has(label)) {
+        items.push({
+          kind: "task",
+          priority: "high",
+          label,
+          rationale: "runtime is already paused in reviewing phase",
+          detail: "Runtime is currently in reviewing phase."
+        });
+        seenTaskLabels.add(label);
+      }
     }
 
     const recentArtifacts = (await this.listArtifacts())
@@ -1152,7 +1173,9 @@ export class HarnessRuntime {
     for (const artifact of recentArtifacts) {
       items.push({
         kind: "artifact",
+        priority: artifact.type === "review" ? "medium" : "low",
         label: `${artifact.type}: ${artifact.path}`,
+        rationale: artifact.type === "review" ? "latest review artifact" : "latest verification artifact",
         detail:
           artifact.relatedTaskId || artifact.relatedPhase
             ? [
@@ -1164,6 +1187,13 @@ export class HarnessRuntime {
             : "recent review-related artifact"
       });
     }
+
+    items.sort((left, right) => {
+      const priorityOrder = { high: 0, medium: 1, low: 2 } as const;
+      const leftRank = priorityOrder[left.priority];
+      const rightRank = priorityOrder[right.priority];
+      return leftRank - rightRank;
+    });
 
     return {
       mode: "queue",
@@ -1179,14 +1209,14 @@ export class HarnessRuntime {
   getPickupPayload(): PickupPayload {
     const status = this.getStatus();
     const selected = status.blocker
-      ? { kind: "blocked" as const, target: status.activeTaskId }
+      ? { kind: "blocked" as const, target: status.activeTaskId, rationale: "active task is blocked and needs recovery before new work starts" }
       : status.activeTaskId
-        ? { kind: "active-task" as const, target: status.activeTaskId }
+        ? { kind: "active-task" as const, target: status.activeTaskId, rationale: "runtime already has an active task selected" }
         : status.readyTasks.length > 0
-          ? { kind: "ready-task" as const, target: status.readyTasks[0] ?? null }
+          ? { kind: "ready-task" as const, target: status.readyTasks[0] ?? null, rationale: "first ready task from the runtime ledger" }
           : status.pendingDependencies.length > 0
-            ? { kind: "waiting" as const, target: status.pendingDependencies[0] ?? null }
-            : { kind: "idle" as const, target: null };
+            ? { kind: "waiting" as const, target: status.pendingDependencies[0] ?? null, rationale: "no ready tasks yet; dependencies still gate progress" }
+            : { kind: "idle" as const, target: null, rationale: "runtime has no active or ready work yet" };
 
     return {
       mode: "pickup",
@@ -1195,6 +1225,7 @@ export class HarnessRuntime {
       activeTaskId: status.activeTaskId,
       activeTaskText: status.activeTaskText,
       target: selected.target,
+      rationale: selected.rationale,
       nextAction: status.nextAction ?? null,
       readyTasks: status.readyTasks,
       pendingDependencies: status.pendingDependencies,

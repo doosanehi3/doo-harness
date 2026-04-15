@@ -1166,11 +1166,12 @@ test("blocked-json reports blocked tasks and blockers", async () => {
     const output = await runCli(cwd, "blocked", "--json");
     const parsed = JSON.parse(extractJsonPayload(output)) as {
       mode: string;
-      items: Array<{ taskId: string; blocker: string }>;
+      items: Array<{ taskId: string; blocker: string; recoveryRecommendation: string }>;
     };
 
     assert.equal(parsed.mode, "blocked");
     assert.ok(parsed.items.some(item => item.taskId === "T1" && /API schema/.test(item.blocker)));
+    assert.ok(parsed.items.some(item => /continue|Inspect/i.test(item.recoveryRecommendation)));
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -1188,12 +1189,15 @@ test("queue review json reports review-related work", async () => {
     const parsed = JSON.parse(extractJsonPayload(output)) as {
       mode: string;
       queue: string;
-      items: Array<{ kind: string; label: string }>;
+      items: Array<{ kind: string; label: string; priority: string; rationale: string }>;
     };
 
     assert.equal(parsed.mode, "queue");
     assert.equal(parsed.queue, "review");
     assert.ok(parsed.items.length > 0);
+    assert.equal(parsed.items[0]?.priority, "high");
+    assert.ok(parsed.items.some(item => item.rationale.length > 0));
+    assert.equal(new Set(parsed.items.filter(item => item.priority === "high").map(item => item.label)).size, parsed.items.filter(item => item.priority === "high").length);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -1210,12 +1214,14 @@ test("pickup-json reports the next safe work recommendation", async () => {
       mode: string;
       pickupKind: string;
       target: string | null;
+      rationale: string;
       nextAction: string | null;
     };
 
     assert.equal(parsed.mode, "pickup");
     assert.equal(parsed.pickupKind, "active-task");
     assert.equal(parsed.target, "T1");
+    assert.match(parsed.rationale, /active task|runtime/i);
     assert.match(parsed.nextAction ?? "", /\/continue/);
   } finally {
     await rm(cwd, { recursive: true, force: true });

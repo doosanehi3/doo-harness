@@ -260,10 +260,11 @@ test("pi-hosted bridge exposes blocked, queue, and pickup entrypoints", async ()
     const blockedOutput = await bridge.execute("blocked --json");
     const blocked = JSON.parse(blockedOutput) as {
       mode: string;
-      items: Array<{ taskId: string }>;
+      items: Array<{ taskId: string; recoveryRecommendation: string }>;
     };
     assert.equal(blocked.mode, "blocked");
     assert.ok(blocked.items.some(item => item.taskId === "T1"));
+    assert.ok(blocked.items.some(item => item.recoveryRecommendation.length > 0));
 
     await runtime.unblockCurrentTask();
     await runtime.executeCurrentTask();
@@ -272,18 +273,22 @@ test("pi-hosted bridge exposes blocked, queue, and pickup entrypoints", async ()
     const queueOutput = await bridge.execute("queue review --json");
     const queue = JSON.parse(queueOutput) as {
       mode: string;
-      items: Array<{ label: string }>;
+      items: Array<{ label: string; priority: string; rationale: string }>;
     };
     assert.equal(queue.mode, "queue");
     assert.ok(queue.items.length > 0);
+    assert.ok(queue.items[0]?.priority);
+    assert.ok(queue.items[0]?.rationale);
 
     const pickupOutput = await bridge.execute("pickup --json");
     const pickup = JSON.parse(pickupOutput) as {
       mode: string;
       pickupKind: string;
+      rationale: string;
     };
     assert.equal(pickup.mode, "pickup");
     assert.ok(["active-task", "blocked", "ready-task", "waiting", "idle"].includes(pickup.pickupKind));
+    assert.ok(pickup.rationale.length > 0);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
