@@ -51,6 +51,7 @@ export function formatStatusLine(input: {
   readyTasks?: string[] | null;
   pendingDependencies?: string[] | null;
   allowedTools?: string[] | null;
+  recentArtifactSummary?: string | null;
   nextAction?: string;
 }): string {
   return [
@@ -96,6 +97,7 @@ export function formatStatusLine(input: {
         : "-"
     }`,
     `Allowed tools: ${input.allowedTools && input.allowedTools.length > 0 ? input.allowedTools.join(", ") : "-"}`,
+    `Recent artifacts: ${input.recentArtifactSummary ?? "-"}`,
     `Next: ${input.nextAction ?? "-"}`
   ].join("\n");
 }

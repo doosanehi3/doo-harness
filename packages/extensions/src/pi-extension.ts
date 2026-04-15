@@ -41,15 +41,16 @@ function formatWidgetFromPayload(payload: unknown): string[] | null {
 
   if (typeof value.path === "string" && Array.isArray(value.preview)) {
     return [
-      "Harness Review",
+      `Harness Review${typeof value.mode === "string" ? ` (${value.mode})` : ""}`,
       `Path: ${value.path}`,
+      `Target: ${typeof value.target === "string" ? value.target : "-"}`,
       `Verification: ${typeof value.verificationStatus === "string" ? value.verificationStatus : "-"}`,
       `Handoff: ${value.handoffEligible === true ? "ready" : "not ready"}`,
-      ...(value.preview as string[]).slice(0, 4)
+      ...(value.preview as string[]).slice(0, 3)
     ];
   }
 
-  if ((value.mode === "find" || value.mode === "grep") && Array.isArray(value.matches)) {
+  if ((value.mode === "find" || value.mode === "grep" || value.mode === "recent") && Array.isArray(value.matches)) {
     return [
       `Harness ${String(value.mode)}`,
       `Query: ${typeof value.query === "string" ? value.query : "-"}`,
@@ -60,13 +61,15 @@ function formatWidgetFromPayload(payload: unknown): string[] | null {
   }
 
   if (typeof value.phase === "string") {
+    const recentArtifacts = Array.isArray(value.recentArtifacts) ? (value.recentArtifacts as string[]).slice(0, 2) : [];
     return [
       "Harness Status",
       `Phase: ${value.phase}`,
       `Task: ${typeof value.activeTaskId === "string" ? value.activeTaskId : "-"}`,
       `Verification: ${typeof value.lastVerificationStatus === "string" ? value.lastVerificationStatus : "-"}`,
       `Blocker: ${typeof value.blocker === "string" ? value.blocker : "-"}`,
-      `Next: ${typeof value.nextAction === "string" ? value.nextAction : "-"}`
+      `Next: ${typeof value.nextAction === "string" ? value.nextAction : "-"}`,
+      ...recentArtifacts
     ];
   }
 
@@ -87,9 +90,9 @@ function summarize(input: string, output: string): string {
   const payload = tryParseJson(output) as Record<string, unknown> | null;
 
   if (payload && typeof payload.path === "string" && Array.isArray(payload.preview)) {
-    return "Harness review ready.";
+    return `Harness review ${typeof payload.mode === "string" ? payload.mode : "quick"} ready.`;
   }
-  if (payload && (payload.mode === "find" || payload.mode === "grep") && Array.isArray(payload.matches)) {
+  if (payload && (payload.mode === "find" || payload.mode === "grep" || payload.mode === "recent") && Array.isArray(payload.matches)) {
     return `Harness ${String(payload.mode)}: ${payload.matches.length} matches`;
   }
   if (payload && typeof payload.phase === "string") {

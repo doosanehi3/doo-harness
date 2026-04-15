@@ -64,25 +64,91 @@ test("pi-hosted bridge exposes review and search surfaces", async () => {
     await runtime.executeCurrentTask();
     await runtime.verify();
 
-    const reviewOutput = await bridge.execute("/review-json");
+    const reviewOutput = await bridge.execute("review deep --json");
     const review = JSON.parse(reviewOutput) as {
+      mode: string;
       path: string;
       preview: string[];
+      history: string[];
       status: { phase: string };
     };
 
+    assert.equal(review.mode, "deep");
     assert.match(review.path, /reviews\/.+\.md$/);
     assert.ok(review.preview.length > 0);
+    assert.ok(Array.isArray(review.history));
     assert.ok(["paused", "completed"].includes(review.status.phase));
 
-    const searchOutput = await bridge.execute("/find-json review");
+    const searchOutput = await bridge.execute("/recent-json review");
     const search = JSON.parse(searchOutput) as {
       mode: string;
       matches: string[];
     };
 
-    assert.equal(search.mode, "find");
-    assert.ok(search.matches.some(line => line.includes("catalog-review.md")));
+    assert.equal(search.mode, "recent");
+    assert.ok(search.matches.some(line => line.includes("/reviews/")));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("pi-hosted bridge exposes compact status", async () => {
+  const cwd = await createTempHarnessDir();
+  try {
+    const bridge = createPiHostedHarnessBridge({ cwd });
+    await bridge.execute("/plan-json Extension-hosted compact status demo");
+
+    const output = await bridge.execute("/status compact --json");
+    const parsed = JSON.parse(output) as {
+      compact: boolean;
+      phase: string;
+      activeTaskId: string | null;
+      recentArtifacts: string[];
+    };
+
+    assert.equal(parsed.compact, true);
+    assert.equal(parsed.phase, "planning");
+    assert.equal(parsed.activeTaskId, "T1");
+    assert.ok(Array.isArray(parsed.recentArtifacts));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("pi-hosted bridge reports invalid artifact filters explicitly", async () => {
+  const cwd = await createTempHarnessDir();
+  try {
+    const bridge = createPiHostedHarnessBridge({ cwd });
+
+    const artifactsOutput = await bridge.execute("artifacts not-a-real-type --json");
+    const artifactsParsed = JSON.parse(artifactsOutput) as { error: string };
+    assert.match(artifactsParsed.error, /Unknown artifact filter/);
+
+    const recentOutput = await bridge.execute("recent bad-filter --json");
+    const recentParsed = JSON.parse(recentOutput) as { error: string };
+    assert.match(recentParsed.error, /Unknown artifact filter/);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("pi-hosted bridge accepts slash-form compact status and rejects invalid artifact filters", async () => {
+  const cwd = await createTempHarnessDir();
+  try {
+    const bridge = createPiHostedHarnessBridge({ cwd });
+    await bridge.execute("/plan-json Extension-hosted slash compact demo");
+
+    const statusOutput = await bridge.execute("/status compact --json");
+    const status = JSON.parse(statusOutput) as {
+      compact: boolean;
+      phase: string;
+    };
+    assert.equal(status.compact, true);
+    assert.equal(status.phase, "planning");
+
+    const artifactsOutput = await bridge.execute("/artifacts-json nope");
+    const artifacts = JSON.parse(artifactsOutput) as { error: string };
+    assert.match(artifacts.error, /Unknown artifact filter/i);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

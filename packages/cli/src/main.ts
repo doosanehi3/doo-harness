@@ -1,7 +1,7 @@
 import { createProcessPiSubstrateAdapter } from "../../ai/src/index.js";
 import { HarnessRuntime, writeDefaultRuntimeConfig } from "../../harness-runtime/src/index.js";
 import { fileURLToPath } from "node:url";
-import { runArtifacts } from "./commands/handlers/artifacts.js";
+import { formatInvalidArtifactFilter, parseArtifactFilter, runArtifacts } from "./commands/handlers/artifacts.js";
 import { runAdvance } from "./commands/handlers/advance.js";
 import { runAuto } from "./commands/handlers/auto.js";
 import { runBlock } from "./commands/handlers/block.js";
@@ -16,11 +16,12 @@ import { runPlan } from "./commands/handlers/plan.js";
 import { runProviderCheck } from "./commands/handlers/provider-check.js";
 import { runProviderDoctor } from "./commands/handlers/provider-doctor.js";
 import { runProviderSmoke } from "./commands/handlers/provider-smoke.js";
+import { buildRecentPayload, runRecent } from "./commands/handlers/recent.js";
 import { runReset } from "./commands/handlers/reset.js";
-import { buildReviewPayload, runReview } from "./commands/handlers/review.js";
-import { buildFindPayload, buildGrepPayload, runSearch } from "./commands/handlers/search.js";
+import { buildReviewPayload, runReview, type ReviewMode } from "./commands/handlers/review.js";
+import { buildFindPayload, buildGrepPayload, buildRecentSearchPayload, runSearch } from "./commands/handlers/search.js";
 import { runResume } from "./commands/handlers/resume.js";
-import { runStatus } from "./commands/handlers/status.js";
+import { buildCompactStatusView, buildStatusView, runCompactStatus, runStatus } from "./commands/handlers/status.js";
 import { runTaskDone } from "./commands/handlers/task-done.js";
 import { runUnblock } from "./commands/handlers/unblock.js";
 import { runVerify } from "./commands/handlers/verify.js";
@@ -80,9 +81,12 @@ function normalizeCliInput(args: string[]): string {
     case "help":
       return json ? "/help-json" : "/help";
     case "status":
+      if (payload[0] === "compact") {
+        return json ? "/status-compact-json" : "/status-compact";
+      }
       return json ? "/status-json" : "/status";
     case "artifacts":
-      return json ? "/artifacts-json" : "/artifacts";
+      return json ? join("/artifacts-json", payload) : join("/artifacts", payload);
     case "plan":
       return json ? join("/plan-json", payload) : join("/plan", payload);
     case "longrun":
@@ -93,6 +97,8 @@ function normalizeCliInput(args: string[]): string {
       return json ? join("/find-json", payload) : join("/find", payload);
     case "grep":
       return json ? join("/grep-json", payload) : join("/grep", payload);
+    case "recent":
+      return json ? join("/recent-json", payload) : join("/recent", payload);
     case "loop":
       return json ? join("/loop-json", payload) : join("/loop", payload);
     case "execute":
@@ -100,7 +106,7 @@ function normalizeCliInput(args: string[]): string {
     case "verify":
       return json ? "/verify-json" : "/verify";
     case "review":
-      return json ? "/review-json" : "/review";
+      return json ? join("/review-json", payload) : join("/review", payload);
     case "handoff":
       return json ? "/handoff-json" : "/handoff";
     case "advance":
@@ -156,9 +162,10 @@ function normalizeCliInput(args: string[]): string {
 
 async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: string): Promise<string> {
   const trimmed = rawInput.trim();
+  const statusPayload = buildStatusView(runtime.getStatus(), await runtime.listArtifacts());
 
   if (trimmed === "" || trimmed === "/status") {
-    return runStatus(runtime.getStatus());
+    return runStatus(statusPayload);
   }
 
   if (trimmed === "/help") {
@@ -170,15 +177,32 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
   }
 
   if (trimmed === "/status-json") {
-    return JSON.stringify(runtime.getStatus(), null, 2);
+    return JSON.stringify(statusPayload, null, 2);
   }
 
-  if (trimmed === "/artifacts") {
-    return runArtifacts(await runtime.listArtifacts());
+  if (trimmed === "/status-compact" || trimmed === "/status compact") {
+    return runCompactStatus(buildCompactStatusView(runtime.getStatus(), await runtime.listArtifacts()));
   }
 
-  if (trimmed === "/artifacts-json") {
-    return JSON.stringify(await runtime.listArtifacts(), null, 2);
+  if (trimmed === "/status-compact-json" || trimmed === "/status compact --json") {
+    return JSON.stringify(buildCompactStatusView(runtime.getStatus(), await runtime.listArtifacts()), null, 2);
+  }
+
+  if (trimmed === "/artifacts" || trimmed.startsWith("/artifacts ")) {
+    const { filter, invalidFilter } = parseArtifactFilter(trimmed.replace(/^\/artifacts\s*/, ""));
+    if (invalidFilter) {
+      return formatInvalidArtifactFilter(invalidFilter);
+    }
+    return runArtifacts(await runtime.listArtifacts(), filter);
+  }
+
+  if (trimmed === "/artifacts-json" || trimmed.startsWith("/artifacts-json ")) {
+    const { filter, invalidFilter } = parseArtifactFilter(trimmed.replace(/^\/artifacts-json\s*/, ""));
+    if (invalidFilter) {
+      return JSON.stringify({ error: formatInvalidArtifactFilter(invalidFilter) }, null, 2);
+    }
+    const artifacts = await runtime.listArtifacts();
+    return JSON.stringify(filter ? artifacts.filter(artifact => artifact.type === filter) : artifacts, null, 2);
   }
 
   if (trimmed === "/config-init-openai-codex") {
@@ -279,6 +303,28 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
     return runSearch(await buildGrepPayload(runtimeCwd, query, runtime.getStatus()));
   }
 
+  if (trimmed === "/recent" || trimmed.startsWith("/recent ")) {
+    const filter = trimmed.replace(/^\/recent\s*/, "");
+    const parsed = parseArtifactFilter(filter);
+    if (parsed.invalidFilter) {
+      return formatInvalidArtifactFilter(parsed.invalidFilter);
+    }
+    return runRecent(buildRecentPayload(await runtime.listArtifacts(), filter, runtime.getStatus()));
+  }
+
+  if (trimmed === "/recent-json" || trimmed.startsWith("/recent-json ")) {
+    const filter = trimmed.replace(/^\/recent-json\s*/, "");
+    const parsed = parseArtifactFilter(filter);
+    if (parsed.invalidFilter) {
+      return JSON.stringify({ error: formatInvalidArtifactFilter(parsed.invalidFilter) }, null, 2);
+    }
+    return JSON.stringify(
+      buildRecentSearchPayload(await runtime.listArtifacts(), filter, runtimeCwd, runtime.getStatus()),
+      null,
+      2
+    );
+  }
+
   if (trimmed.startsWith("/loop-json")) {
     const rawSteps = trimmed.replace(/^\/loop-json\s*/, "").trim();
     const maxSteps = rawSteps === "" ? 10 : Number.parseInt(rawSteps, 10);
@@ -377,16 +423,30 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
     return JSON.stringify({ ...(await runtime.verify()), status: runtime.getStatus() }, null, 2);
   }
 
-  if (trimmed === "/review") {
+  if (trimmed === "/review" || trimmed.startsWith("/review ")) {
+    const rawMode = trimmed.replace(/^\/review\s*/, "").trim();
+    const mode: ReviewMode = rawMode === "diff" || rawMode === "deep" ? rawMode : "quick";
     const path = await runtime.review();
-    return runReview(await buildReviewPayload(path, runtime.getStatus()));
+    return runReview(
+      await buildReviewPayload(path, runtime.getStatus(), {
+        mode,
+        cwd: runtimeCwd,
+        artifacts: await runtime.listArtifacts()
+      })
+    );
   }
 
-  if (trimmed === "/review-json") {
+  if (trimmed === "/review-json" || trimmed.startsWith("/review-json ")) {
+    const rawMode = trimmed.replace(/^\/review-json\s*/, "").trim();
+    const mode: ReviewMode = rawMode === "diff" || rawMode === "deep" ? rawMode : "quick";
     const path = await runtime.review();
     return JSON.stringify(
       {
-        ...(await buildReviewPayload(path, runtime.getStatus())),
+        ...(await buildReviewPayload(path, runtime.getStatus(), {
+          mode,
+          cwd: runtimeCwd,
+          artifacts: await runtime.listArtifacts()
+        })),
         status: runtime.getStatus()
       },
       null,
@@ -425,6 +485,7 @@ export async function main(): Promise<void> {
   });
   const output = await execute(runtime, input, runtimeCwd);
   const status = runtime.getStatus();
+  const panelArtifacts = await runtime.listArtifacts();
   const panel = renderRuntimePanel({
       phase: status.phase,
       flow: status.flow,
@@ -461,6 +522,14 @@ export async function main(): Promise<void> {
       readyTasks: status.readyTasks,
       pendingDependencies: status.pendingDependencies,
       allowedTools: status.allowedTools,
+      recentArtifactSummary:
+        panelArtifacts.length > 0
+          ? [...panelArtifacts]
+              .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+              .slice(0, 3)
+              .map(item => `${item.type}: ${item.path}`)
+              .join(" | ")
+          : null,
       resumePhase: status.resumePhase,
       nextAction: status.nextAction
     });
@@ -468,6 +537,10 @@ export async function main(): Promise<void> {
   const shouldHidePanel =
     input === "/help" ||
     input === "/status-json" ||
+    input === "/status-compact" ||
+    input === "/status-compact-json" ||
+    input === "/status compact" ||
+    input === "/status compact --json" ||
     input === "/help-json" ||
     input === "/config-show" ||
     input === "/provider-check-json" ||
@@ -486,11 +559,13 @@ export async function main(): Promise<void> {
     input.startsWith("/plan-json") ||
     input.startsWith("/longrun-json") ||
     input === "/verify-json" ||
-    input === "/review-json" ||
+    input.startsWith("/review-json") ||
     input === "/handoff-json" ||
     input.startsWith("/loop-json") ||
     input.startsWith("/find-json") ||
-    input.startsWith("/grep-json");
+    input.startsWith("/grep-json") ||
+    input.startsWith("/recent-json") ||
+    input.startsWith("/artifacts-json");
   process.stdout.write(
     shouldShowOnlyPanel ? `${panel}\n` : shouldHidePanel ? `${output}\n` : `${output}\n\n${panel}\n`
   );

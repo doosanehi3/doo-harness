@@ -58,6 +58,7 @@ export function renderRuntimePanel(data: RuntimePanelData): string {
         : "-"
     }`,
     `Allowed tools: ${data.allowedTools && data.allowedTools.length > 0 ? data.allowedTools.join(", ") : "-"}`,
+    `Recent artifacts: ${data.recentArtifactSummary ?? "-"}`,
     `Next: ${data.nextAction ?? "-"}`
   ].join("\n");
 }

@@ -1,7 +1,56 @@
-import type { RuntimeStatus } from "@doo/harness-runtime";
+import type { ArtifactMeta, RuntimeStatus } from "@doo/harness-runtime";
 import { formatStatusLine } from "../../output.js";
 
-export function runStatus(status: RuntimeStatus): string {
+export interface StatusView extends RuntimeStatus {
+  recentArtifacts: string[];
+  recentArtifactSummary: string | null;
+}
+
+export interface CompactStatusView {
+  compact: true;
+  phase: string;
+  activeTaskId: string | null;
+  activeTaskText: string | null;
+  lastVerificationStatus: string | null;
+  blocker: string | null;
+  handoffEligible: boolean;
+  handoffReason: string | null;
+  nextAction: string | null;
+  recentArtifacts: string[];
+}
+
+function selectRecentArtifacts(artifacts: ArtifactMeta[], limit: number = 3): string[] {
+  return [...artifacts]
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .slice(0, limit)
+    .map(item => `${item.type}: ${item.path}`);
+}
+
+export function buildStatusView(status: RuntimeStatus, artifacts: ArtifactMeta[]): StatusView {
+  const recentArtifacts = selectRecentArtifacts(artifacts);
+  return {
+    ...status,
+    recentArtifacts,
+    recentArtifactSummary: recentArtifacts.length > 0 ? recentArtifacts.join(" | ") : null
+  };
+}
+
+export function buildCompactStatusView(status: RuntimeStatus, artifacts: ArtifactMeta[]): CompactStatusView {
+  return {
+    compact: true,
+    phase: status.phase,
+    activeTaskId: status.activeTaskId,
+    activeTaskText: status.activeTaskText,
+    lastVerificationStatus: status.lastVerificationStatus,
+    blocker: status.blocker,
+    handoffEligible: status.handoffEligible,
+    handoffReason: status.handoffReason,
+    nextAction: status.nextAction ?? null,
+    recentArtifacts: selectRecentArtifacts(artifacts)
+  };
+}
+
+export function runStatus(status: StatusView): string {
   return formatStatusLine({
     phase: status.phase,
     flow: status.flow,
@@ -41,6 +90,21 @@ export function runStatus(status: RuntimeStatus): string {
     readyTasks: status.readyTasks,
     pendingDependencies: status.pendingDependencies,
     allowedTools: status.allowedTools,
+    recentArtifactSummary: status.recentArtifactSummary,
     nextAction: status.nextAction
   });
+}
+
+export function runCompactStatus(status: CompactStatusView): string {
+  return [
+    "Status",
+    `Phase: ${status.phase}`,
+    `Task: ${status.activeTaskId ?? "-"}${status.activeTaskText ? ` ${status.activeTaskText}` : ""}`,
+    `Verification: ${status.lastVerificationStatus ?? "-"}`,
+    `Blocker: ${status.blocker ?? "-"}`,
+    `Handoff: ${status.handoffEligible ? "ready" : "not ready"}`,
+    `Handoff reason: ${status.handoffReason ?? "-"}`,
+    `Recent artifacts: ${status.recentArtifacts.length > 0 ? status.recentArtifacts.join(" | ") : "-"}`,
+    `Next: ${status.nextAction ?? "-"}`
+  ].join("\n");
 }

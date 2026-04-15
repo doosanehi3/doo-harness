@@ -37,5 +37,6 @@ export interface RuntimePanelData {
   readyTasks?: string[] | null;
   pendingDependencies?: string[] | null;
   allowedTools?: string[] | null;
+  recentArtifactSummary?: string | null;
   nextAction?: string | null;
 }

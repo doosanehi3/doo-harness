@@ -76,6 +76,7 @@ test("status-json returns machine-readable runtime status without panel text", a
       handoffEligible: boolean;
       handoffReason: string | null;
       resumePhase: string | null;
+      recentArtifacts: string[];
     };
 
     assert.equal(parsed.phase, "planning");
@@ -85,6 +86,74 @@ test("status-json returns machine-readable runtime status without panel text", a
     assert.equal(parsed.handoffEligible, true);
     assert.equal(parsed.handoffReason, null);
     assert.equal(parsed.resumePhase, null);
+    assert.ok(Array.isArray(parsed.recentArtifacts));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("status compact json returns a machine-readable compact summary", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-status-compact-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI status compact demo", true);
+
+    const output = await runCli(cwd, "status", "compact", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      compact: boolean;
+      phase: string;
+      activeTaskId: string | null;
+      nextAction: string | null;
+      recentArtifacts: string[];
+    };
+
+    assert.equal(parsed.compact, true);
+    assert.equal(parsed.phase, "planning");
+    assert.equal(parsed.activeTaskId, "T1");
+    assert.match(parsed.nextAction ?? "", /\/continue/);
+    assert.ok(Array.isArray(parsed.recentArtifacts));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("split-arg slash-form status compact json resolves to the compact status surface", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-status-compact-slash-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI status compact slash demo", true);
+
+    const output = await runCli(cwd, "/status compact --json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      compact: boolean;
+      phase: string;
+      activeTaskId: string | null;
+    };
+
+    assert.equal(parsed.compact, true);
+    assert.equal(parsed.phase, "planning");
+    assert.equal(parsed.activeTaskId, "T1");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("slash-form status compact json resolves to the compact status surface", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-status-compact-slash-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI slash compact demo", true);
+
+    const output = await runCli(cwd, "/status", "compact", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      compact: boolean;
+      phase: string;
+      activeTaskId: string | null;
+    };
+
+    assert.equal(parsed.compact, true);
+    assert.equal(parsed.phase, "planning");
+    assert.equal(parsed.activeTaskId, "T1");
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -163,6 +232,41 @@ test("artifacts-json returns machine-readable artifact metadata without panel te
     assert.ok(parsed.some(item => item.type === "spec"));
     assert.ok(parsed.some(item => item.type === "plan"));
     assert.ok(parsed.some(item => item.type === "milestones"));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("artifacts-json can filter by artifact type", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-artifacts-filter-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI artifacts filter demo", true);
+    await runtime.executeCurrentTask();
+    await runtime.verify();
+    await runtime.review();
+
+    const output = await runCli(cwd, "artifacts", "review", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as Array<{ type: string; path: string }>;
+
+    assert.ok(parsed.length > 0);
+    assert.ok(parsed.every(item => item.type === "review"));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("artifacts-json rejects invalid artifact filters instead of broadening scope", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-artifacts-invalid-filter-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI artifacts invalid filter demo", true);
+
+    const output = await runCli(cwd, "artifacts", "not-a-real-type", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as { error: string };
+
+    assert.match(parsed.error, /Unknown artifact filter/i);
+    assert.match(parsed.error, /not-a-real-type/);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -699,17 +803,63 @@ test("review-json returns a machine-readable review artifact payload", async () 
 
     const output = await runCli(cwd, "/review-json");
     const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      target: string;
       path: string;
+      summary: string;
       preview: string[];
+      diffStat: string[];
+      history: string[];
       verificationStatus: string | null;
       status: { phase: string; activeTaskId: string | null };
     };
 
+    assert.equal(parsed.mode, "quick");
+    assert.equal(parsed.target, "active-task:T1");
     assert.match(parsed.path, /reviews\/.+\.md$/);
+    assert.match(parsed.summary, /Fast review/i);
     assert.ok(parsed.preview.length > 0);
+    assert.deepEqual(parsed.diffStat, []);
+    assert.deepEqual(parsed.history, []);
     assert.equal(parsed.verificationStatus, "pass");
     assert.equal(parsed.status.phase, "paused");
     assert.equal(parsed.status.activeTaskId, "T1");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("review diff and deep expose richer mode-specific payloads", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-review-modes-"));
+  try {
+    await execFileAsync("git", ["init"], { cwd });
+    await writeFile(join(cwd, "fresh-review-target.md"), "# fresh review target\n", "utf8");
+
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI review mode demo", true);
+    await runtime.executeCurrentTask();
+    await runtime.verify();
+
+    const diffOutput = await runCli(cwd, "review", "diff", "--json");
+    const diffParsed = JSON.parse(extractJsonPayload(diffOutput)) as {
+      mode: string;
+      target: string;
+      diffStat: string[];
+    };
+
+    assert.equal(diffParsed.mode, "diff");
+    assert.equal(diffParsed.target, "working-tree-diff");
+    assert.ok(diffParsed.diffStat.length > 0);
+    assert.ok(diffParsed.diffStat.some(line => line.includes("fresh-review-target.md")));
+
+    const deepOutput = await runCli(cwd, "review", "deep", "--json");
+    const deepParsed = JSON.parse(extractJsonPayload(deepOutput)) as {
+      mode: string;
+      history: string[];
+    };
+
+    assert.equal(deepParsed.mode, "deep");
+    assert.ok(Array.isArray(deepParsed.history));
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -750,6 +900,61 @@ test("grep-json returns a machine-readable content search payload", async () => 
     assert.equal(parsed.mode, "grep");
     assert.equal(parsed.query, "release readiness");
     assert.ok(parsed.matches.some(line => line.includes("catalog-notes.md:1:catalog release readiness")));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("recent-json returns recent artifact recall payload", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-recent-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI recent review demo", true);
+    await runtime.executeCurrentTask();
+    await runtime.verify();
+    await runtime.review();
+
+    const output = await runCli(cwd, "recent", "review", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      query: string;
+      matches: string[];
+    };
+
+    assert.equal(parsed.mode, "recent");
+    assert.equal(parsed.query, "review");
+    assert.ok(parsed.matches.some(line => line.includes("/reviews/")));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("artifacts and recent report invalid filters explicitly", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-invalid-filter-"));
+  try {
+    const artifactsOutput = await runCli(cwd, "artifacts", "not-a-real-type", "--json");
+    const artifactsParsed = JSON.parse(extractJsonPayload(artifactsOutput)) as { error: string };
+    assert.match(artifactsParsed.error, /Unknown artifact filter/);
+
+    const recentOutput = await runCli(cwd, "recent", "bad-filter", "--json");
+    const recentParsed = JSON.parse(extractJsonPayload(recentOutput)) as { error: string };
+    assert.match(recentParsed.error, /Unknown artifact filter/);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("recent-json rejects invalid artifact filters instead of broadening scope", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-recent-invalid-filter-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI recent invalid filter demo", true);
+
+    const output = await runCli(cwd, "recent", "bad-filter", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as { error: string };
+
+    assert.match(parsed.error, /Unknown artifact filter/i);
+    assert.match(parsed.error, /bad-filter/);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

@@ -10,6 +10,7 @@ export const COMMANDS = [
   "continue",
   "find",
   "grep",
+  "recent",
   "verify",
   "review",
   "longrun",

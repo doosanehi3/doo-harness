@@ -1,16 +1,17 @@
 import { createPiSubstrateAdapter, type PiSubstrateAdapter } from "../../ai/src/index.js";
 import { HarnessRuntime } from "../../harness-runtime/src/index.js";
-import { runArtifacts } from "../../cli/src/commands/handlers/artifacts.js";
+import { formatInvalidArtifactFilter, parseArtifactFilter, runArtifacts } from "../../cli/src/commands/handlers/artifacts.js";
 import { runContinue } from "../../cli/src/commands/handlers/continue.js";
 import { buildHelpPayload, runHelp } from "../../cli/src/commands/handlers/help.js";
 import { runHandoff } from "../../cli/src/commands/handlers/handoff.js";
 import { runLongRun } from "../../cli/src/commands/handlers/longrun.js";
 import { runPlan } from "../../cli/src/commands/handlers/plan.js";
+import { buildRecentPayload, runRecent } from "../../cli/src/commands/handlers/recent.js";
 import { runReset } from "../../cli/src/commands/handlers/reset.js";
 import { runResume } from "../../cli/src/commands/handlers/resume.js";
-import { buildReviewPayload, runReview } from "../../cli/src/commands/handlers/review.js";
-import { buildFindPayload, buildGrepPayload, runSearch } from "../../cli/src/commands/handlers/search.js";
-import { runStatus } from "../../cli/src/commands/handlers/status.js";
+import { buildReviewPayload, runReview, type ReviewMode } from "../../cli/src/commands/handlers/review.js";
+import { buildFindPayload, buildGrepPayload, buildRecentSearchPayload, runSearch } from "../../cli/src/commands/handlers/search.js";
+import { buildCompactStatusView, buildStatusView, runCompactStatus, runStatus } from "../../cli/src/commands/handlers/status.js";
 import { runVerify } from "../../cli/src/commands/handlers/verify.js";
 
 export interface PiHostedHarnessHost {
@@ -43,9 +44,12 @@ function normalizeHostedInput(input: string): string {
     case "help":
       return json ? "/help-json" : "/help";
     case "status":
+      if (payload[0] === "compact") {
+        return json ? "/status-compact-json" : "/status-compact";
+      }
       return json ? "/status-json" : "/status";
     case "artifacts":
-      return json ? "/artifacts-json" : "/artifacts";
+      return json ? join("/artifacts-json", payload) : join("/artifacts", payload);
     case "plan":
       return json ? join("/plan-json", payload) : join("/plan", payload);
     case "longrun":
@@ -56,10 +60,12 @@ function normalizeHostedInput(input: string): string {
       return json ? join("/find-json", payload) : join("/find", payload);
     case "grep":
       return json ? join("/grep-json", payload) : join("/grep", payload);
+    case "recent":
+      return json ? join("/recent-json", payload) : join("/recent", payload);
     case "verify":
       return json ? "/verify-json" : "/verify";
     case "review":
-      return json ? "/review-json" : "/review";
+      return json ? join("/review-json", payload) : join("/review", payload);
     case "handoff":
       return json ? "/handoff-json" : "/handoff";
     case "resume":
@@ -85,6 +91,7 @@ function createHostedAdapter(host: PiHostedHarnessHost): PiSubstrateAdapter {
 
 async function executeHostedCommand(runtime: HarnessRuntime, cwd: string, input: string): Promise<string> {
   const trimmed = normalizeHostedInput(input);
+  const statusPayload = buildStatusView(runtime.getStatus(), await runtime.listArtifacts());
 
   if (trimmed === "/help") {
     return runHelp();
@@ -93,16 +100,31 @@ async function executeHostedCommand(runtime: HarnessRuntime, cwd: string, input:
     return JSON.stringify(buildHelpPayload(), null, 2);
   }
   if (trimmed === "/status") {
-    return runStatus(runtime.getStatus());
+    return runStatus(statusPayload);
   }
   if (trimmed === "/status-json") {
-    return JSON.stringify(runtime.getStatus(), null, 2);
+    return JSON.stringify(statusPayload, null, 2);
   }
-  if (trimmed === "/artifacts") {
-    return runArtifacts(await runtime.listArtifacts());
+  if (trimmed === "/status-compact" || trimmed === "/status compact") {
+    return runCompactStatus(buildCompactStatusView(runtime.getStatus(), await runtime.listArtifacts()));
   }
-  if (trimmed === "/artifacts-json") {
-    return JSON.stringify(await runtime.listArtifacts(), null, 2);
+  if (trimmed === "/status-compact-json" || trimmed === "/status compact --json") {
+    return JSON.stringify(buildCompactStatusView(runtime.getStatus(), await runtime.listArtifacts()), null, 2);
+  }
+  if (trimmed === "/artifacts" || trimmed.startsWith("/artifacts ")) {
+    const { filter, invalidFilter } = parseArtifactFilter(trimmed.replace(/^\/artifacts\s*/, ""));
+    if (invalidFilter) {
+      return formatInvalidArtifactFilter(invalidFilter);
+    }
+    return runArtifacts(await runtime.listArtifacts(), filter);
+  }
+  if (trimmed === "/artifacts-json" || trimmed.startsWith("/artifacts-json ")) {
+    const { filter, invalidFilter } = parseArtifactFilter(trimmed.replace(/^\/artifacts-json\s*/, ""));
+    if (invalidFilter) {
+      return JSON.stringify({ error: formatInvalidArtifactFilter(invalidFilter) }, null, 2);
+    }
+    const artifacts = await runtime.listArtifacts();
+    return JSON.stringify(filter ? artifacts.filter(artifact => artifact.type === filter) : artifacts, null, 2);
   }
   if (trimmed.startsWith("/plan-json")) {
     const goal = trimmed.replace(/^\/plan-json\s*/, "").trim();
@@ -146,6 +168,26 @@ async function executeHostedCommand(runtime: HarnessRuntime, cwd: string, input:
     const query = trimmed.replace(/^\/grep\s*/, "");
     return runSearch(await buildGrepPayload(cwd, query, runtime.getStatus()));
   }
+  if (trimmed === "/recent" || trimmed.startsWith("/recent ")) {
+    const filter = trimmed.replace(/^\/recent\s*/, "");
+    const parsed = parseArtifactFilter(filter);
+    if (parsed.invalidFilter) {
+      return formatInvalidArtifactFilter(parsed.invalidFilter);
+    }
+    return runRecent(buildRecentPayload(await runtime.listArtifacts(), filter, runtime.getStatus()));
+  }
+  if (trimmed === "/recent-json" || trimmed.startsWith("/recent-json ")) {
+    const filter = trimmed.replace(/^\/recent-json\s*/, "");
+    const parsed = parseArtifactFilter(filter);
+    if (parsed.invalidFilter) {
+      return JSON.stringify({ error: formatInvalidArtifactFilter(parsed.invalidFilter) }, null, 2);
+    }
+    return JSON.stringify(
+      buildRecentSearchPayload(await runtime.listArtifacts(), filter, cwd, runtime.getStatus()),
+      null,
+      2
+    );
+  }
   if (trimmed === "/verify") {
     return runVerify((await runtime.verify()).path);
   }
@@ -153,13 +195,34 @@ async function executeHostedCommand(runtime: HarnessRuntime, cwd: string, input:
     const verification = await runtime.verify();
     return JSON.stringify({ ...verification, status: runtime.getStatus() }, null, 2);
   }
-  if (trimmed === "/review") {
+  if (trimmed === "/review" || trimmed.startsWith("/review ")) {
+    const rawMode = trimmed.replace(/^\/review\s*/, "").trim();
+    const mode: ReviewMode = rawMode === "diff" || rawMode === "deep" ? rawMode : "quick";
     const path = await runtime.review();
-    return runReview(await buildReviewPayload(path, runtime.getStatus()));
+    return runReview(
+      await buildReviewPayload(path, runtime.getStatus(), {
+        mode,
+        cwd,
+        artifacts: await runtime.listArtifacts()
+      })
+    );
   }
-  if (trimmed === "/review-json") {
+  if (trimmed === "/review-json" || trimmed.startsWith("/review-json ")) {
+    const rawMode = trimmed.replace(/^\/review-json\s*/, "").trim();
+    const mode: ReviewMode = rawMode === "diff" || rawMode === "deep" ? rawMode : "quick";
     const path = await runtime.review();
-    return JSON.stringify({ ...(await buildReviewPayload(path, runtime.getStatus())), status: runtime.getStatus() }, null, 2);
+    return JSON.stringify(
+      {
+        ...(await buildReviewPayload(path, runtime.getStatus(), {
+          mode,
+          cwd,
+          artifacts: await runtime.listArtifacts()
+        })),
+        status: runtime.getStatus()
+      },
+      null,
+      2
+    );
   }
   if (trimmed === "/handoff") {
     return runHandoff(await runtime.createHandoff());

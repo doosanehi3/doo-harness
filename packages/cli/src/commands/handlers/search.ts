@@ -1,19 +1,21 @@
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
-import type { RuntimeStatus } from "@doo/harness-runtime";
+import type { ArtifactMeta, RuntimeStatus } from "@doo/harness-runtime";
+import { filterArtifacts, parseArtifactFilter } from "./artifacts.js";
 
 const execFile = promisify(execFileCb);
 const SEARCH_LIMIT = 20;
 const SEARCH_MAX_BUFFER = 4 * 1024 * 1024;
 
 export interface SearchPayload {
-  mode: "find" | "grep";
+  mode: "find" | "grep" | "recent";
   query: string;
   cwd: string;
   phase: string;
   taskId: string | null;
   taskText: string | null;
   matches: string[];
+  groups: Array<{ label: string; matches: string[] }>;
   truncated: boolean;
   command: string;
 }
@@ -66,6 +68,12 @@ export async function buildFindPayload(cwd: string, query: string, status: Runti
     taskId: status.activeTaskId,
     taskText: status.activeTaskText,
     matches: matches.slice(0, SEARCH_LIMIT),
+    groups: [
+      {
+        label: "file matches",
+        matches: matches.slice(0, SEARCH_LIMIT)
+      }
+    ],
     truncated: matches.length > SEARCH_LIMIT,
     command: `rg --files --hidden | filter(${JSON.stringify(normalizedQuery)})`
   };
@@ -92,17 +100,52 @@ export async function buildGrepPayload(cwd: string, query: string, status: Runti
     taskId: status.activeTaskId,
     taskText: status.activeTaskText,
     matches: matches.slice(0, SEARCH_LIMIT),
+    groups: [
+      {
+        label: "content matches",
+        matches: matches.slice(0, SEARCH_LIMIT)
+      }
+    ],
     truncated: matches.length > SEARCH_LIMIT,
     command: `rg -n --hidden --smart-case ${JSON.stringify(normalizedQuery)}`
   };
 }
 
+export function buildRecentSearchPayload(
+  artifacts: ArtifactMeta[],
+  rawFilter: string,
+  cwd: string,
+  status: RuntimeStatus
+): SearchPayload {
+  const { filter } = parseArtifactFilter(rawFilter);
+  const filtered = filterArtifacts(artifacts, filter).slice(0, SEARCH_LIMIT);
+  const matches = filtered.map(item => item.path);
+
+  return {
+    mode: "recent",
+    query: filter ?? "artifacts",
+    cwd,
+    phase: status.phase,
+    taskId: status.activeTaskId,
+    taskText: status.activeTaskText,
+    matches,
+    groups: [
+      {
+        label: filter ? `recent ${filter}` : "recent artifacts",
+        matches
+      }
+    ],
+    truncated: false,
+    command: `runtime.listArtifacts(${filter ? `filter=${filter}` : "all"})`
+  };
+}
+
 export function runSearch(result: SearchPayload): string {
   return [
-    `${result.mode === "find" ? "Find" : "Grep"} results for "${result.query}"`,
+    `${result.mode === "find" ? "Find" : result.mode === "grep" ? "Grep" : "Recent"} results for "${result.query}"`,
     `Phase: ${result.phase}`,
     `Task context: ${result.taskId ?? "-"}${result.taskText ? ` ${result.taskText}` : ""}`,
-    `Matches: ${result.matches.length === 0 ? "(none)" : result.matches.join(" | ")}`,
+    ...result.groups.flatMap(group => [`${group.label}:`, group.matches.length === 0 ? "(none)" : group.matches.join(" | ")]),
     `Truncated: ${result.truncated ? "yes" : "no"}`,
     `Command: ${result.command}`
   ].join("\n");

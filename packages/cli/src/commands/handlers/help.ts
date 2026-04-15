@@ -15,8 +15,8 @@ export function buildHelpPayload(): HelpPayload {
       "Initialize config: harness config init or harness config init openai-codex",
       "Check provider readiness: harness provider check or harness provider doctor",
       "Start work: harness plan <goal> or harness longrun <goal>",
-      "Drive the operator loop: harness help, harness status, harness verify, harness handoff, harness reset, harness resume",
-      "Review or relocate context: harness review, harness find <name>, harness grep <text>"
+      "Drive the operator loop: harness help, harness status, harness status compact, harness verify, harness handoff, harness reset, harness resume",
+      "Review or relocate context: harness review quick|diff|deep, harness find <name>, harness grep <text>, harness recent review"
     ],
     commandGroups: [
       {
@@ -24,6 +24,7 @@ export function buildHelpPayload(): HelpPayload {
         commands: [
           "harness help [--json]",
           "harness status [--json]",
+          "harness status compact [--json]",
           "harness verify [--json]",
           "harness handoff [--json]",
           "harness reset [--json]",
@@ -34,6 +35,7 @@ export function buildHelpPayload(): HelpPayload {
         title: "Core Flow",
         commands: [
           "harness status [--json]",
+          "harness status compact [--json]",
           "harness plan [--json] <goal>",
           "harness longrun [--json] <goal>",
           "harness continue [--json]",
@@ -46,9 +48,13 @@ export function buildHelpPayload(): HelpPayload {
       {
         title: "Review and Search",
         commands: [
-          "harness review [--json]",
+          "harness review quick [--json]",
+          "harness review diff [--json]",
+          "harness review deep [--json]",
           "harness find [--json] <file-query>",
-          "harness grep [--json] <content-query>"
+          "harness grep [--json] <content-query>",
+          "harness artifacts [--json] [type]",
+          "harness recent [--json] review|verification|handoff"
         ]
       },
       {
