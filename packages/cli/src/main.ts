@@ -17,7 +17,8 @@ import { runProviderCheck } from "./commands/handlers/provider-check.js";
 import { runProviderDoctor } from "./commands/handlers/provider-doctor.js";
 import { runProviderSmoke } from "./commands/handlers/provider-smoke.js";
 import { runReset } from "./commands/handlers/reset.js";
-import { runReview } from "./commands/handlers/review.js";
+import { buildReviewPayload, runReview } from "./commands/handlers/review.js";
+import { buildFindPayload, buildGrepPayload, runSearch } from "./commands/handlers/search.js";
 import { runResume } from "./commands/handlers/resume.js";
 import { runStatus } from "./commands/handlers/status.js";
 import { runTaskDone } from "./commands/handlers/task-done.js";
@@ -88,6 +89,10 @@ function normalizeCliInput(args: string[]): string {
       return json ? join("/longrun-json", payload) : join("/longrun", payload);
     case "continue":
       return json ? "/continue-json" : "/continue";
+    case "find":
+      return json ? join("/find-json", payload) : join("/find", payload);
+    case "grep":
+      return json ? join("/grep-json", payload) : join("/grep", payload);
     case "loop":
       return json ? join("/loop-json", payload) : join("/loop", payload);
     case "execute":
@@ -254,6 +259,26 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
     return JSON.stringify({ result: await runtime.continueTaskLoop(), status: runtime.getStatus() }, null, 2);
   }
 
+  if (trimmed.startsWith("/find-json")) {
+    const query = trimmed.replace(/^\/find-json\s*/, "");
+    return JSON.stringify(await buildFindPayload(runtimeCwd, query, runtime.getStatus()), null, 2);
+  }
+
+  if (trimmed.startsWith("/find")) {
+    const query = trimmed.replace(/^\/find\s*/, "");
+    return runSearch(await buildFindPayload(runtimeCwd, query, runtime.getStatus()));
+  }
+
+  if (trimmed.startsWith("/grep-json")) {
+    const query = trimmed.replace(/^\/grep-json\s*/, "");
+    return JSON.stringify(await buildGrepPayload(runtimeCwd, query, runtime.getStatus()), null, 2);
+  }
+
+  if (trimmed.startsWith("/grep")) {
+    const query = trimmed.replace(/^\/grep\s*/, "");
+    return runSearch(await buildGrepPayload(runtimeCwd, query, runtime.getStatus()));
+  }
+
   if (trimmed.startsWith("/loop-json")) {
     const rawSteps = trimmed.replace(/^\/loop-json\s*/, "").trim();
     const maxSteps = rawSteps === "" ? 10 : Number.parseInt(rawSteps, 10);
@@ -353,13 +378,15 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
   }
 
   if (trimmed === "/review") {
-    return runReview(await runtime.review());
+    const path = await runtime.review();
+    return runReview(await buildReviewPayload(path, runtime.getStatus()));
   }
 
   if (trimmed === "/review-json") {
+    const path = await runtime.review();
     return JSON.stringify(
       {
-        path: await runtime.review(),
+        ...(await buildReviewPayload(path, runtime.getStatus())),
         status: runtime.getStatus()
       },
       null,
@@ -461,7 +488,9 @@ export async function main(): Promise<void> {
     input === "/verify-json" ||
     input === "/review-json" ||
     input === "/handoff-json" ||
-    input.startsWith("/loop-json");
+    input.startsWith("/loop-json") ||
+    input.startsWith("/find-json") ||
+    input.startsWith("/grep-json");
   process.stdout.write(
     shouldShowOnlyPanel ? `${panel}\n` : shouldHidePanel ? `${output}\n` : `${output}\n\n${panel}\n`
   );

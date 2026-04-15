@@ -1,100 +1,51 @@
 # Fresh Machine Setup
 
-This document describes the minimum expected setup for a developer trying the
-Harness runtime and pi extension surfaces on a fresh machine.
+This checklist defines the minimum fresh-machine contract for running the
+Harness CLI and the pi-hosted extension path.
 
-## Prerequisites
+## Required Tools
 
-- Node.js 20+
+- Node.js 22.x or newer
 - `pnpm`
-- `pi` available on `PATH`, or access to the local package-backed pi CLI path
+- `ripgrep` (`rg`) on `PATH`
+- `pi` CLI when validating the extension surface
 
-## Setup Steps
+`ripgrep` is required for:
 
-1. Clone the repository
-2. Install dependencies:
+- `harness find`
+- `harness grep`
+- `/harness find`
+- `/harness grep`
+
+If `rg` is missing, the search commands fail with an explicit runtime error.
+
+## Workspace Bring-Up
+
+From a fresh checkout:
 
 ```bash
 pnpm install
-```
-
-3. Verify the repo itself:
-
-```bash
 pnpm run check
 pnpm run test
 ```
 
-4. Verify the real pi-backed command path with a one-off extension load:
+## pi Extension Validation
+
+For extension validation on a fresh machine, run:
 
 ```bash
-pi -e /absolute/path/to/harness/packages/extensions/src/pi-extension.ts
+pnpm run smoke:pi:print
+pnpm run smoke:pi:install
+pnpm run smoke:pi:ui
 ```
 
-5. Inside pi, run:
+Then run the manual interactive smoke from
+[interactive-pi-smoke.md](/Users/baekdoosan/Documents/DOO/harness/docs/interactive-pi-smoke.md).
 
-```text
-/harness help --json
-/harness status --json
-```
+## Expected Outcome
 
-6. If you want the package installed into the project-local pi config:
+A machine is considered ready when:
 
-```bash
-pi install -l /absolute/path/to/harness/packages/extensions
-```
-
-## Expected Outcomes
-
-- `pnpm run check` passes
-- `pnpm run test` passes
-- pi starts with the Harness extension loaded
-- `/harness help --json` returns the operator loop payload
-- `/harness status --json` returns runtime state JSON
-
-## Failure Modes
-
-### `pi: command not found`
-
-Meaning:
-
-- `pi` is not installed or not on `PATH`
-
-What to do:
-
-- install `pi`
-- or invoke the local package-backed CLI path directly for smoke/debugging
-
-### `pnpm install` fails
-
-Meaning:
-
-- runtime/package dependencies are not available yet
-
-What to do:
-
-- fix package manager or network issues first
-- do not treat the extension path as validated until install succeeds
-
-### `/harness ...` command is missing inside pi
-
-Meaning:
-
-- extension path was not loaded or not installed
-
-What to do:
-
-- retry with explicit `-e` path
-- confirm the local install path in `.pi/settings.json`
-
-### print-mode smoke is inconsistent
-
-Meaning:
-
-- non-interactive command interception may differ from interactive slash-command
-  behavior
-
-What to do:
-
-- prefer interactive pi smoke as the source of truth
-- treat scriptable smoke as a release-quality target, not yet a hard invariant
+- the workspace checks pass
+- the automated pi smoke commands pass
+- manual interactive `/harness` commands render and respond inside pi

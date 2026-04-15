@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 import { createPiHostedHarnessBridge, type PiHostedHarnessBridge } from "./pi-hosted.js";
 
+const WIDGET_KEY = "harness-command-result";
 const bridgeByCwd = new Map<string, PiHostedHarnessBridge>();
 
 function getBridge(cwd: string): PiHostedHarnessBridge {
@@ -13,7 +14,92 @@ function getBridge(cwd: string): PiHostedHarnessBridge {
   return bridge;
 }
 
-function summarize(output: string): string {
+function tryParseJson(output: string): unknown | null {
+  try {
+    return JSON.parse(output);
+  } catch {
+    return null;
+  }
+}
+
+function formatWidgetFromPayload(payload: unknown): string[] | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const value = payload as Record<string, unknown>;
+
+  if (typeof value.overview === "string" && Array.isArray(value.commandGroups)) {
+    const firstGroup = value.commandGroups[0] as { title?: string; commands?: string[] } | undefined;
+    return [
+      "Harness",
+      value.overview,
+      firstGroup?.title ? `Group: ${firstGroup.title}` : "Group: -",
+      ...(firstGroup?.commands?.slice(0, 4) ?? [])
+    ];
+  }
+
+  if (typeof value.path === "string" && Array.isArray(value.preview)) {
+    return [
+      "Harness Review",
+      `Path: ${value.path}`,
+      `Verification: ${typeof value.verificationStatus === "string" ? value.verificationStatus : "-"}`,
+      `Handoff: ${value.handoffEligible === true ? "ready" : "not ready"}`,
+      ...(value.preview as string[]).slice(0, 4)
+    ];
+  }
+
+  if ((value.mode === "find" || value.mode === "grep") && Array.isArray(value.matches)) {
+    return [
+      `Harness ${String(value.mode)}`,
+      `Query: ${typeof value.query === "string" ? value.query : "-"}`,
+      `Task: ${typeof value.taskId === "string" ? value.taskId : "-"}`,
+      ...(value.matches as string[]).slice(0, 5),
+      `Truncated: ${value.truncated === true ? "yes" : "no"}`
+    ];
+  }
+
+  if (typeof value.phase === "string") {
+    return [
+      "Harness Status",
+      `Phase: ${value.phase}`,
+      `Task: ${typeof value.activeTaskId === "string" ? value.activeTaskId : "-"}`,
+      `Verification: ${typeof value.lastVerificationStatus === "string" ? value.lastVerificationStatus : "-"}`,
+      `Blocker: ${typeof value.blocker === "string" ? value.blocker : "-"}`,
+      `Next: ${typeof value.nextAction === "string" ? value.nextAction : "-"}`
+    ];
+  }
+
+  return null;
+}
+
+function toWidgetLines(output: string, maxLines: number = 16): string[] {
+  const payload = tryParseJson(output);
+  const structured = formatWidgetFromPayload(payload);
+  if (structured) {
+    return structured.slice(0, maxLines);
+  }
+  return output.split("\n").slice(0, maxLines);
+}
+
+function summarize(input: string, output: string): string {
+  const normalizedInput = input.trim();
+  const payload = tryParseJson(output) as Record<string, unknown> | null;
+
+  if (payload && typeof payload.path === "string" && Array.isArray(payload.preview)) {
+    return "Harness review ready.";
+  }
+  if (payload && (payload.mode === "find" || payload.mode === "grep") && Array.isArray(payload.matches)) {
+    return `Harness ${String(payload.mode)}: ${payload.matches.length} matches`;
+  }
+  if (payload && typeof payload.phase === "string") {
+    const task = typeof payload.activeTaskId === "string" ? ` ${payload.activeTaskId}` : "";
+    return `Harness status: ${payload.phase}${task}`;
+  }
+  if (normalizedInput.includes("help")) {
+    return "Harness help ready.";
+  }
+
   const first = output.split("\n").find(line => line.trim().length > 0);
   if (!first) {
     return "Harness command executed.";
@@ -22,11 +108,7 @@ function summarize(output: string): string {
   if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
     return "Harness command executed.";
   }
-  return first;
-}
-
-function toWidgetLines(output: string, maxLines: number = 16): string[] {
-  return output.split("\n").slice(0, maxLines);
+  return trimmed;
 }
 
 export default function harnessPiExtension(pi: ExtensionAPI): void {
@@ -36,21 +118,25 @@ export default function harnessPiExtension(pi: ExtensionAPI): void {
       const bridge = getBridge(ctx.cwd);
       const input = args.trim() || "status --json";
       const output = await bridge.execute(input);
+      const widgetLines = toWidgetLines(output);
+      const message = summarize(input, output);
 
       pi.appendEntry?.("harness-command-result", {
         cwd: ctx.cwd,
         input,
-        output
+        output,
+        message,
+        widgetLines
       });
 
       if (ctx.hasUI !== false) {
-        ctx.ui.setWidget?.("harness-command-result", toWidgetLines(output), {
+        ctx.ui?.setWidget?.(WIDGET_KEY, widgetLines, {
           placement: "belowEditor"
         });
       } else {
         process.stdout.write(`${output}\n`);
       }
-      ctx.ui.notify(summarize(output), "info");
+      ctx.ui?.notify?.(message, "info");
     }
   });
 }

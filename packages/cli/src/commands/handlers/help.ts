@@ -15,7 +15,8 @@ export function buildHelpPayload(): HelpPayload {
       "Initialize config: harness config init or harness config init openai-codex",
       "Check provider readiness: harness provider check or harness provider doctor",
       "Start work: harness plan <goal> or harness longrun <goal>",
-      "Drive the operator loop: harness help, harness status, harness verify, harness handoff, harness reset, harness resume"
+      "Drive the operator loop: harness help, harness status, harness verify, harness handoff, harness reset, harness resume",
+      "Review or relocate context: harness review, harness find <name>, harness grep <text>"
     ],
     commandGroups: [
       {
@@ -40,6 +41,14 @@ export function buildHelpPayload(): HelpPayload {
           "harness execute [--json]",
           "harness verify [--json]",
           "harness review [--json]"
+        ]
+      },
+      {
+        title: "Review and Search",
+        commands: [
+          "harness review [--json]",
+          "harness find [--json] <file-query>",
+          "harness grep [--json] <content-query>"
         ]
       },
       {

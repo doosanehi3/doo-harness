@@ -75,7 +75,7 @@ Rationale:
 - [x] scriptable install-from-path smoke
 - [x] install-from-path smoke script
 - [x] interactive pi session launch and slash-command acceptance smoke
-- [ ] interactive widget/notification rendering capture
+- [x] interactive widget/notification rendering capture
 - [x] define print/install smoke as required release-gate commands
 
 ## Recommended Next Release Gate
@@ -86,14 +86,18 @@ Before calling the package shippable:
 2. run `pnpm run test`
 3. run `pnpm run smoke:pi:print`
 4. run `pnpm run smoke:pi:install`
-5. run interactive pi session smoke
-6. verify widget rendering and `/harness` command visibility
-7. record release note summary
+5. run `pnpm run smoke:pi:ui`
+6. run interactive pi session smoke
+7. verify widget rendering and `/harness` command visibility
+8. record release note summary
 
 ## Notes
 
 - The main product architecture is no longer the blocker.
 - Remaining work is packaging, documentation, and release discipline.
+- Widget and notification rendering now has a reproducible capture path through
+  `pnpm run smoke:pi:ui`, which exercises the real extension handler with a UI
+  stub and records the rendered widget lines plus notifications.
 
 ## Fresh Machine Expectations
 

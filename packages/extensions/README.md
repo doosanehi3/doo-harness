@@ -51,11 +51,20 @@ Then verify:
 ```bash
 /harness help --json
 /harness status --json
+/harness find --json plan
+/harness review --json
+```
+
+Scriptable UI capture:
+
+```bash
+pnpm run smoke:pi:ui
 ```
 
 ## Notes
 
 - `@mariozechner/pi-coding-agent` is declared as a peer dependency and a local
   dev dependency
+- `ripgrep` (`rg`) must be present on `PATH` for `find` and `grep`
 - runtime ownership remains in Harness; this package only hosts the command
   surface inside `pi`

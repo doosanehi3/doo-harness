@@ -8,7 +8,8 @@ import { runLongRun } from "../../cli/src/commands/handlers/longrun.js";
 import { runPlan } from "../../cli/src/commands/handlers/plan.js";
 import { runReset } from "../../cli/src/commands/handlers/reset.js";
 import { runResume } from "../../cli/src/commands/handlers/resume.js";
-import { runReview } from "../../cli/src/commands/handlers/review.js";
+import { buildReviewPayload, runReview } from "../../cli/src/commands/handlers/review.js";
+import { buildFindPayload, buildGrepPayload, runSearch } from "../../cli/src/commands/handlers/search.js";
 import { runStatus } from "../../cli/src/commands/handlers/status.js";
 import { runVerify } from "../../cli/src/commands/handlers/verify.js";
 
@@ -51,6 +52,10 @@ function normalizeHostedInput(input: string): string {
       return json ? join("/longrun-json", payload) : join("/longrun", payload);
     case "continue":
       return json ? "/continue-json" : "/continue";
+    case "find":
+      return json ? join("/find-json", payload) : join("/find", payload);
+    case "grep":
+      return json ? join("/grep-json", payload) : join("/grep", payload);
     case "verify":
       return json ? "/verify-json" : "/verify";
     case "review":
@@ -78,7 +83,7 @@ function createHostedAdapter(host: PiHostedHarnessHost): PiSubstrateAdapter {
   });
 }
 
-async function executeHostedCommand(runtime: HarnessRuntime, input: string): Promise<string> {
+async function executeHostedCommand(runtime: HarnessRuntime, cwd: string, input: string): Promise<string> {
   const trimmed = normalizeHostedInput(input);
 
   if (trimmed === "/help") {
@@ -125,6 +130,22 @@ async function executeHostedCommand(runtime: HarnessRuntime, input: string): Pro
   if (trimmed === "/continue-json") {
     return JSON.stringify({ result: await runtime.continueTaskLoop(), status: runtime.getStatus() }, null, 2);
   }
+  if (trimmed.startsWith("/find-json")) {
+    const query = trimmed.replace(/^\/find-json\s*/, "");
+    return JSON.stringify(await buildFindPayload(cwd, query, runtime.getStatus()), null, 2);
+  }
+  if (trimmed.startsWith("/find")) {
+    const query = trimmed.replace(/^\/find\s*/, "");
+    return runSearch(await buildFindPayload(cwd, query, runtime.getStatus()));
+  }
+  if (trimmed.startsWith("/grep-json")) {
+    const query = trimmed.replace(/^\/grep-json\s*/, "");
+    return JSON.stringify(await buildGrepPayload(cwd, query, runtime.getStatus()), null, 2);
+  }
+  if (trimmed.startsWith("/grep")) {
+    const query = trimmed.replace(/^\/grep\s*/, "");
+    return runSearch(await buildGrepPayload(cwd, query, runtime.getStatus()));
+  }
   if (trimmed === "/verify") {
     return runVerify((await runtime.verify()).path);
   }
@@ -133,10 +154,12 @@ async function executeHostedCommand(runtime: HarnessRuntime, input: string): Pro
     return JSON.stringify({ ...verification, status: runtime.getStatus() }, null, 2);
   }
   if (trimmed === "/review") {
-    return runReview(await runtime.review());
+    const path = await runtime.review();
+    return runReview(await buildReviewPayload(path, runtime.getStatus()));
   }
   if (trimmed === "/review-json") {
-    return JSON.stringify({ path: await runtime.review(), status: runtime.getStatus() }, null, 2);
+    const path = await runtime.review();
+    return JSON.stringify({ ...(await buildReviewPayload(path, runtime.getStatus())), status: runtime.getStatus() }, null, 2);
   }
   if (trimmed === "/handoff") {
     return runHandoff(await runtime.createHandoff());
@@ -172,7 +195,7 @@ export function createPiHostedHarnessBridge(host: PiHostedHarnessHost): PiHosted
     },
     async execute(input: string): Promise<string> {
       const runtime = await runtimePromise;
-      return executeHostedCommand(runtime, input);
+      return executeHostedCommand(runtime, host.cwd, input);
     }
   };
 }

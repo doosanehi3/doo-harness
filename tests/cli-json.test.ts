@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -689,7 +689,7 @@ test("loop-json returns machine-readable completion steps without panel text", a
   }
 });
 
-test("review-json returns a machine-readable review artifact path", async () => {
+test("review-json returns a machine-readable review artifact payload", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-review-"));
   try {
     const runtime = await HarnessRuntime.create(cwd);
@@ -700,12 +700,56 @@ test("review-json returns a machine-readable review artifact path", async () => 
     const output = await runCli(cwd, "/review-json");
     const parsed = JSON.parse(extractJsonPayload(output)) as {
       path: string;
+      preview: string[];
+      verificationStatus: string | null;
       status: { phase: string; activeTaskId: string | null };
     };
 
     assert.match(parsed.path, /reviews\/.+\.md$/);
+    assert.ok(parsed.preview.length > 0);
+    assert.equal(parsed.verificationStatus, "pass");
     assert.equal(parsed.status.phase, "paused");
     assert.equal(parsed.status.activeTaskId, "T1");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("find-json returns a machine-readable file search payload", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-find-"));
+  try {
+    await writeFile(join(cwd, "catalog-plan.md"), "# catalog plan\n", "utf8");
+
+    const output = await runCli(cwd, "/find-json", "plan");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      query: string;
+      matches: string[];
+    };
+
+    assert.equal(parsed.mode, "find");
+    assert.equal(parsed.query, "plan");
+    assert.ok(parsed.matches.some(line => line.includes("catalog-plan.md")));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("grep-json returns a machine-readable content search payload", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-grep-"));
+  try {
+    await writeFile(join(cwd, "catalog-notes.md"), "catalog release readiness\n", "utf8");
+
+    const output = await runCli(cwd, "/grep-json", "release readiness");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      query: string;
+      matches: string[];
+    };
+
+    assert.equal(parsed.mode, "grep");
+    assert.equal(parsed.query, "release readiness");
+    assert.ok(parsed.matches.some(line => line.includes("catalog-notes.md:1:catalog release readiness")));
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

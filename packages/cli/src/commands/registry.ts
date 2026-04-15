@@ -8,6 +8,8 @@ export const COMMANDS = [
   "block",
   "unblock",
   "continue",
+  "find",
+  "grep",
   "verify",
   "review",
   "longrun",

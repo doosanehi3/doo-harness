@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import harnessPiExtension from "../packages/extensions/src/pi-extension.js";
@@ -55,10 +55,77 @@ test("pi extension command executes hosted bridge and reports output", async () 
       }
     });
 
-    assert.ok(notifications.some(message => /Harness command executed/i.test(message)));
-    assert.ok(widgetUpdates.some(lines => lines.some(line => line.includes("pi-ready runtime-core product"))));
+    assert.ok(notifications.some(message => /Harness help ready/i.test(message)));
+    assert.ok(widgetUpdates.some(lines => lines[0] === "Harness"));
     assert.equal(appended.length, 1);
   } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("pi extension formats search results into widget and notification output", async () => {
+  const cwd = await createTempHarnessDir();
+  const notifications: string[] = [];
+  const widgetUpdates: string[][] = [];
+  let handler: ((args: string, ctx: any) => Promise<void> | void) | null = null;
+
+  try {
+    await writeFile(join(cwd, "catalog-plan-target.md"), "# catalog plan\n", "utf8");
+
+    harnessPiExtension({
+      registerCommand(_name, options) {
+        handler = options.handler;
+      }
+    });
+
+    assert.ok(handler);
+    await handler!("find --json catalog-plan-target", {
+      cwd,
+      hasUI: true,
+      ui: {
+        notify(message: string) {
+          notifications.push(message);
+        },
+        setWidget(_key: string, content: string[] | undefined) {
+          widgetUpdates.push(content ?? []);
+        }
+      }
+    });
+
+    assert.ok(notifications.some(message => /Harness find:/i.test(message)));
+    assert.ok(widgetUpdates.some(lines => lines.includes("catalog-plan-target.md")));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("pi extension tolerates non-ui contexts without a ui object", async () => {
+  const cwd = await createTempHarnessDir();
+  let handler: ((args: string, ctx: any) => Promise<void> | void) | null = null;
+  let stdout = "";
+  const originalWrite = process.stdout.write.bind(process.stdout);
+
+  try {
+    harnessPiExtension({
+      registerCommand(_name, options) {
+        handler = options.handler;
+      }
+    });
+
+    assert.ok(handler);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      stdout += chunk.toString();
+      return true;
+    }) as typeof process.stdout.write;
+
+    await handler!("status --json", {
+      cwd,
+      hasUI: false
+    });
+
+    assert.match(stdout, /"phase": "idle"/);
+  } finally {
+    process.stdout.write = originalWrite;
     await rm(cwd, { recursive: true, force: true });
   }
 });
