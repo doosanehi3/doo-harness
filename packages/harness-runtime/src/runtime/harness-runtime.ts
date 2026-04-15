@@ -105,6 +105,52 @@ export interface RuntimeStatus {
   nextAction: string;
 }
 
+export interface BlockedEntry {
+  taskId: string;
+  taskText: string | null;
+  blocker: string;
+  recoveryHint: string | null;
+  milestoneId: string | null;
+}
+
+export interface BlockedPayload {
+  mode: "blocked";
+  phase: string;
+  activeTaskId: string | null;
+  activeTaskText: string | null;
+  items: BlockedEntry[];
+  summary: string;
+}
+
+export interface QueueEntry {
+  kind: "task" | "artifact";
+  label: string;
+  detail: string;
+}
+
+export interface QueuePayload {
+  mode: "queue";
+  queue: "review";
+  phase: string;
+  activeTaskId: string | null;
+  activeTaskText: string | null;
+  items: QueueEntry[];
+  summary: string;
+}
+
+export interface PickupPayload {
+  mode: "pickup";
+  phase: string;
+  pickupKind: "active-task" | "blocked" | "ready-task" | "waiting" | "idle";
+  activeTaskId: string | null;
+  activeTaskText: string | null;
+  target: string | null;
+  nextAction: string | null;
+  readyTasks: string[];
+  pendingDependencies: string[];
+  blocker: string | null;
+}
+
 export interface CompletionLoopResult {
   steps: string[];
   stopReason: "completed" | "blocked" | "no_progress" | "max_steps";
@@ -1018,6 +1064,106 @@ export class HarnessRuntime {
 
   getTaskStateSnapshot(): TaskState {
     return structuredClone(this.session.taskState);
+  }
+
+  getBlockedPayload(): BlockedPayload {
+    const status = this.getStatus();
+    const items = Object.entries(this.session.taskState.tasks)
+      .filter(([, taskStatus]) => taskStatus === "blocked")
+      .map(([taskId]) => ({
+        taskId,
+        taskText: this.session.taskState.taskTexts[taskId] ?? null,
+        blocker: this.session.taskState.taskBlockers[taskId] ?? "unknown blocker",
+        recoveryHint: this.session.taskState.taskRecoveryHints[taskId] ?? null,
+        milestoneId: this.session.taskState.taskMilestones[taskId] ?? null
+      }));
+
+    return {
+      mode: "blocked",
+      phase: status.phase,
+      activeTaskId: status.activeTaskId,
+      activeTaskText: status.activeTaskText,
+      items,
+      summary: items.length > 0 ? `${items.length} blocked task(s).` : "No blocked tasks."
+    };
+  }
+
+  async getReviewQueuePayload(): Promise<QueuePayload> {
+    const status = this.getStatus();
+    const items: QueueEntry[] = [];
+
+    if (status.activeTaskId && this.session.taskState.tasks[status.activeTaskId] === "validated") {
+      items.push({
+        kind: "task",
+        label: `${status.activeTaskId} ${status.activeTaskText ?? ""}`.trim(),
+        detail: status.nextAction
+      });
+    }
+
+    if (status.phase === "reviewing" && status.activeTaskId) {
+      items.push({
+        kind: "task",
+        label: `${status.activeTaskId} ${status.activeTaskText ?? ""}`.trim(),
+        detail: "Runtime is currently in reviewing phase."
+      });
+    }
+
+    const recentArtifacts = (await this.listArtifacts())
+      .filter(item => item.type === "verification" || item.type === "review")
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .slice(0, 5);
+
+    for (const artifact of recentArtifacts) {
+      items.push({
+        kind: "artifact",
+        label: `${artifact.type}: ${artifact.path}`,
+        detail:
+          artifact.relatedTaskId || artifact.relatedPhase
+            ? [
+                artifact.relatedTaskId ? `task=${artifact.relatedTaskId}` : null,
+                artifact.relatedPhase ? `phase=${artifact.relatedPhase}` : null
+              ]
+                .filter(Boolean)
+                .join(" ")
+            : "recent review-related artifact"
+      });
+    }
+
+    return {
+      mode: "queue",
+      queue: "review",
+      phase: status.phase,
+      activeTaskId: status.activeTaskId,
+      activeTaskText: status.activeTaskText,
+      items,
+      summary: items.length > 0 ? `${items.length} review queue item(s).` : "Review queue is empty."
+    };
+  }
+
+  getPickupPayload(): PickupPayload {
+    const status = this.getStatus();
+    const selected = status.blocker
+      ? { kind: "blocked" as const, target: status.activeTaskId }
+      : status.activeTaskId
+        ? { kind: "active-task" as const, target: status.activeTaskId }
+        : status.readyTasks.length > 0
+          ? { kind: "ready-task" as const, target: status.readyTasks[0] ?? null }
+          : status.pendingDependencies.length > 0
+            ? { kind: "waiting" as const, target: status.pendingDependencies[0] ?? null }
+            : { kind: "idle" as const, target: null };
+
+    return {
+      mode: "pickup",
+      phase: status.phase,
+      pickupKind: selected.kind,
+      activeTaskId: status.activeTaskId,
+      activeTaskText: status.activeTaskText,
+      target: selected.target,
+      nextAction: status.nextAction ?? null,
+      readyTasks: status.readyTasks,
+      pendingDependencies: status.pendingDependencies,
+      blocker: status.blocker
+    };
   }
 
   getProviderReadiness(): ProviderRoleReadiness[] {
