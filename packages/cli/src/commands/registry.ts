@@ -1,6 +1,7 @@
 export const COMMANDS = [
   "auto",
   "direct",
+  "doctor",
   "clarify",
   "plan",
   "execute",
@@ -22,6 +23,7 @@ export const COMMANDS = [
   "timeline",
   "pickup",
   "queue",
+  "bootstrap",
   "handoff",
   "reset"
 ] as const;

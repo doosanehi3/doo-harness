@@ -19,6 +19,7 @@ import { runProviderCheck } from "./commands/handlers/provider-check.js";
 import { runProviderDoctor } from "./commands/handlers/provider-doctor.js";
 import { runProviderSmoke } from "./commands/handlers/provider-smoke.js";
 import { buildRecentPayload, runRecent } from "./commands/handlers/recent.js";
+import { buildBootstrapPayload, buildDoctorPayload, formatInvalidBootstrapPreset, parseBootstrapPreset, runBootstrap, runDoctor } from "./commands/handlers/onboarding.js";
 import { runReset } from "./commands/handlers/reset.js";
 import { buildReviewPayload, runReview, type ReviewMode } from "./commands/handlers/review.js";
 import { buildFindPayload, buildGrepPayload, buildRecentSearchPayload, runSearch } from "./commands/handlers/search.js";
@@ -83,6 +84,14 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
 
   if (trimmed === "/help-json") {
     return JSON.stringify(buildHelpPayload(), null, 2);
+  }
+
+  if (trimmed === "/doctor") {
+    return runDoctor(await buildDoctorPayload(runtimeCwd, runtime.getProviderReadiness()));
+  }
+
+  if (trimmed === "/doctor-json") {
+    return JSON.stringify(await buildDoctorPayload(runtimeCwd, runtime.getProviderReadiness()), null, 2);
   }
 
   if (trimmed === "/status-json") {
@@ -274,6 +283,22 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
 
   if (trimmed === "/pickup-json") {
     return JSON.stringify(runtime.getPickupPayload(), null, 2);
+  }
+
+  if (trimmed === "/bootstrap" || trimmed.startsWith("/bootstrap ")) {
+    const parsed = parseBootstrapPreset(trimmed.replace(/^\/bootstrap\s*/, ""));
+    if (parsed.invalidPreset) {
+      return formatInvalidBootstrapPreset(parsed.invalidPreset);
+    }
+    return runBootstrap(buildBootstrapPayload(parsed.preset));
+  }
+
+  if (trimmed === "/bootstrap-json" || trimmed.startsWith("/bootstrap-json ")) {
+    const parsed = parseBootstrapPreset(trimmed.replace(/^\/bootstrap-json\s*/, ""));
+    if (parsed.invalidPreset) {
+      return JSON.stringify({ error: formatInvalidBootstrapPreset(parsed.invalidPreset) }, null, 2);
+    }
+    return JSON.stringify(buildBootstrapPayload(parsed.preset), null, 2);
   }
 
   if (trimmed.startsWith("/loop-json")) {
@@ -487,7 +512,12 @@ export async function main(): Promise<void> {
   const shouldShowOnlyPanel = input === "/status" || input.trim() === "";
   const shouldHidePanel =
     input === "/help" ||
+    input === "/doctor" ||
+    input === "/bootstrap" ||
     input === "/status-json" ||
+    input === "/doctor-json" ||
+    input.startsWith("/bootstrap ") ||
+    input.startsWith("/bootstrap-json") ||
     input === "/status-compact" ||
     input === "/status-compact-json" ||
     input === "/status compact" ||

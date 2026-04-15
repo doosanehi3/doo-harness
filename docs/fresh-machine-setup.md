@@ -25,8 +25,16 @@ From a fresh checkout:
 
 ```bash
 pnpm install
+pnpm run dev -- help
 pnpm run check
 pnpm run test
+```
+
+Then run:
+
+```bash
+harness doctor
+harness bootstrap
 ```
 
 ## pi Extension Validation
@@ -47,5 +55,6 @@ Then run the manual interactive smoke from
 A machine is considered ready when:
 
 - the workspace checks pass
+- `harness doctor` shows no missing required tools
 - the automated pi smoke commands pass
 - manual interactive `/harness` commands render and respond inside pi

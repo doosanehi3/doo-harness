@@ -13,12 +13,13 @@ export function buildHelpPayload(): HelpPayload {
       "Harness is a pi-ready runtime-core product and long-running coding runtime focused on artifact-led state, verification, recovery, and provider-aware operation.",
     quickStart: [
       "Initialize config: harness config init or harness config init openai-codex",
-      "Check provider readiness: harness provider check or harness provider doctor",
+      "Run onboarding checks: harness doctor, harness provider check, harness provider doctor",
       "Start work: harness plan <goal> or harness longrun <goal>",
       "Drive the operator loop: harness help, harness status, harness status compact, harness verify, harness handoff, harness reset, harness resume",
       "Review or relocate context: harness review quick|diff|deep, harness find <name>, harness grep <text>, harness recent review",
       "Operational entrypoints: harness blocked, harness queue review, harness pickup",
-      "Artifact inspection: harness artifacts [type], harness artifacts related, harness timeline"
+      "Artifact inspection: harness artifacts [type], harness artifacts related, harness timeline",
+      "Bootstrap presets: harness bootstrap"
     ],
     commandGroups: [
       {
@@ -95,6 +96,13 @@ export function buildHelpPayload(): HelpPayload {
           "harness provider check [--json]",
           "harness provider smoke [--json] [role]",
           "harness provider doctor [--json]"
+        ]
+      },
+      {
+        title: "Onboarding",
+        commands: [
+          "harness doctor [--json]",
+          "harness bootstrap [--json] [preset]"
         ]
       },
       {

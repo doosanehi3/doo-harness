@@ -26,6 +26,35 @@ test("pi-hosted bridge returns machine-readable help payload", async () => {
   }
 });
 
+test("pi-hosted bridge exposes doctor and bootstrap onboarding surfaces", async () => {
+  const cwd = await createTempHarnessDir();
+  try {
+    const bridge = createPiHostedHarnessBridge({ cwd });
+
+    const doctorOutput = await bridge.execute("doctor --json");
+    const doctor = JSON.parse(doctorOutput) as {
+      mode: string;
+      tools: Array<{ name: string }>;
+    };
+    assert.equal(doctor.mode, "doctor");
+    assert.ok(doctor.tools.some(item => item.name === "node"));
+
+    const bootstrapOutput = await bridge.execute("bootstrap --json");
+    const bootstrap = JSON.parse(bootstrapOutput) as {
+      mode: string;
+      presets: Array<{ id: string }>;
+    };
+    assert.equal(bootstrap.mode, "bootstrap");
+    assert.ok(bootstrap.presets.some(item => item.id === "node-cli"));
+
+    const invalidBootstrapOutput = await bridge.execute("bootstrap nope --json");
+    const invalidBootstrap = JSON.parse(invalidBootstrapOutput) as { error: string };
+    assert.match(invalidBootstrap.error, /Unknown bootstrap preset/);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("pi-hosted bridge can plan and expose runtime status", async () => {
   const cwd = await createTempHarnessDir();
   try {

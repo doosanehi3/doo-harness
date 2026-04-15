@@ -346,6 +346,63 @@ test("config-init-openai-codex writes a codex subscription profile", async () =>
   }
 });
 
+test("doctor-json reports shell readiness and next steps", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-doctor-"));
+  try {
+    const output = await runCli(cwd, "doctor", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      tools: Array<{ name: string; installed: boolean; required: boolean }>;
+      nextSteps: string[];
+    };
+
+    assert.equal(parsed.mode, "doctor");
+    assert.ok(parsed.tools.some(item => item.name === "node"));
+    assert.ok(parsed.nextSteps.length > 0);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("plain doctor output stays onboarding-only without runtime panel", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-doctor-plain-"));
+  try {
+    const output = await runCli(cwd, "doctor");
+    assert.match(output, /Tools:/);
+    assert.doesNotMatch(output, /^Phase:/m);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("bootstrap-json reports preset guidance", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-bootstrap-"));
+  try {
+    const output = await runCli(cwd, "bootstrap", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      presets: Array<{ id: string; kickoff: string }>;
+    };
+
+    assert.equal(parsed.mode, "bootstrap");
+    assert.ok(parsed.presets.some(item => item.id === "node-cli"));
+    assert.ok(parsed.presets.some(item => /longrun/.test(item.kickoff)));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("bootstrap-json rejects invalid presets explicitly", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-bootstrap-invalid-"));
+  try {
+    const output = await runCli(cwd, "bootstrap", "nope", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as { error: string };
+    assert.match(parsed.error, /Unknown bootstrap preset/);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("provider-check-json returns machine-readable provider readiness", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-provider-"));
   try {

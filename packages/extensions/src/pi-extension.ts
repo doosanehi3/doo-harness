@@ -87,6 +87,24 @@ function formatWidgetFromPayload(payload: unknown): string[] | null {
     ];
   }
 
+  if (value.mode === "doctor" && Array.isArray(value.tools)) {
+    return [
+      "Harness Doctor",
+      `${typeof value.summary === "string" ? value.summary : "doctor summary"}`,
+      ...(value.tools as Array<{ name?: string; installed?: boolean }>).slice(0, 4).map(
+        item => `${item.name ?? "-"}: ${item.installed ? "ready" : "missing"}`
+      )
+    ];
+  }
+
+  if (value.mode === "bootstrap" && Array.isArray(value.presets)) {
+    return [
+      "Harness Bootstrap",
+      `${typeof value.summary === "string" ? value.summary : "bootstrap presets"}`,
+      ...(value.presets as Array<{ id?: string }>).slice(0, 4).map(item => item.id ?? "-")
+    ];
+  }
+
   if (value.mode === "related" && Array.isArray(value.items)) {
     return [
       "Harness Related",
@@ -146,6 +164,12 @@ function summarize(input: string, output: string): string {
   }
   if (payload && payload.mode === "pickup") {
     return `Harness pickup: ${typeof payload.pickupKind === "string" ? payload.pickupKind : "ready"}`;
+  }
+  if (payload && payload.mode === "doctor" && Array.isArray(payload.tools)) {
+    return `Harness doctor: ${payload.tools.length} tool check(s)`;
+  }
+  if (payload && payload.mode === "bootstrap" && Array.isArray(payload.presets)) {
+    return `Harness bootstrap: ${payload.presets.length} preset(s)`;
   }
   if (payload && payload.mode === "related" && Array.isArray(payload.items)) {
     return `Harness related: ${payload.items.length} item(s)`;

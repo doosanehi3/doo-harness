@@ -8,6 +8,7 @@ import { buildHelpPayload, runHelp } from "../../cli/src/commands/handlers/help.
 import { runHandoff } from "../../cli/src/commands/handlers/handoff.js";
 import { runLongRun } from "../../cli/src/commands/handlers/longrun.js";
 import { normalizeCommandString } from "../../cli/src/commands/normalize-input.js";
+import { buildBootstrapPayload, buildDoctorPayload, formatInvalidBootstrapPreset, parseBootstrapPreset, runBootstrap, runDoctor } from "../../cli/src/commands/handlers/onboarding.js";
 import { runPlan } from "../../cli/src/commands/handlers/plan.js";
 import { buildRecentPayload, runRecent } from "../../cli/src/commands/handlers/recent.js";
 import { runReset } from "../../cli/src/commands/handlers/reset.js";
@@ -49,6 +50,12 @@ async function executeHostedCommand(runtime: HarnessRuntime, cwd: string, input:
   }
   if (trimmed === "/help-json") {
     return JSON.stringify(buildHelpPayload(), null, 2);
+  }
+  if (trimmed === "/doctor") {
+    return runDoctor(await buildDoctorPayload(cwd, runtime.getProviderReadiness()));
+  }
+  if (trimmed === "/doctor-json") {
+    return JSON.stringify(await buildDoctorPayload(cwd, runtime.getProviderReadiness()), null, 2);
   }
   if (trimmed === "/status") {
     return runStatus(statusPayload);
@@ -170,6 +177,20 @@ async function executeHostedCommand(runtime: HarnessRuntime, cwd: string, input:
   }
   if (trimmed === "/pickup-json") {
     return JSON.stringify(runtime.getPickupPayload(), null, 2);
+  }
+  if (trimmed === "/bootstrap" || trimmed.startsWith("/bootstrap ")) {
+    const parsed = parseBootstrapPreset(trimmed.replace(/^\/bootstrap\s*/, ""));
+    if (parsed.invalidPreset) {
+      return formatInvalidBootstrapPreset(parsed.invalidPreset);
+    }
+    return runBootstrap(buildBootstrapPayload(parsed.preset));
+  }
+  if (trimmed === "/bootstrap-json" || trimmed.startsWith("/bootstrap-json ")) {
+    const parsed = parseBootstrapPreset(trimmed.replace(/^\/bootstrap-json\s*/, ""));
+    if (parsed.invalidPreset) {
+      return JSON.stringify({ error: formatInvalidBootstrapPreset(parsed.invalidPreset) }, null, 2);
+    }
+    return JSON.stringify(buildBootstrapPayload(parsed.preset), null, 2);
   }
   if (trimmed === "/verify") {
     return runVerify((await runtime.verify()).path);

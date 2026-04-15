@@ -16,6 +16,8 @@ export function normalizeCommandTokens(tokens: string[]): string {
   switch (command) {
     case "help":
       return json ? "/help-json" : "/help";
+    case "doctor":
+      return json ? "/doctor-json" : "/doctor";
     case "status":
       if (payload[0] === "compact") {
         return json ? "/status-compact-json" : "/status-compact";
@@ -64,6 +66,8 @@ export function normalizeCommandTokens(tokens: string[]): string {
       return json ? "/blocked-json" : "/blocked";
     case "pickup":
       return json ? "/pickup-json" : "/pickup";
+    case "bootstrap":
+      return json ? join("/bootstrap-json", payload) : join("/bootstrap", payload);
     case "queue":
       if (payload[0] === "review") {
         return json ? "/queue-review-json" : "/queue-review";
