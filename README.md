@@ -73,6 +73,15 @@ Run the CLI directly from the repo:
 pnpm run start -- help
 ```
 
+Try the real pi-hosted extension path from this repo:
+
+```bash
+node node_modules/.pnpm/@mariozechner+pi-coding-agent@0.65.2_ws@8.20.0_zod@4.3.6/node_modules/@mariozechner/pi-coding-agent/dist/cli.js \
+  -p --no-session --no-extensions \
+  -e ./packages/extensions/src/pi-extension.ts \
+  "/harness help --json"
+```
+
 Core verification commands:
 
 ```bash
@@ -144,6 +153,51 @@ HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- web smoke --json
 HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- loop --json 10
 ```
 
+## Use Inside pi
+
+Harness now exposes a package-backed pi extension entrypoint through:
+
+- `packages/extensions/src/pi-extension.ts`
+
+Quick local smoke:
+
+```bash
+node node_modules/.pnpm/@mariozechner+pi-coding-agent@0.65.2_ws@8.20.0_zod@4.3.6/node_modules/@mariozechner/pi-coding-agent/dist/cli.js \
+  -p --no-session --no-extensions \
+  -e ./packages/extensions/src/pi-extension.ts \
+  "/harness status --json"
+```
+
+Available command surface through `/harness`:
+
+- `help`
+- `status`
+- `plan`
+- `longrun`
+- `continue`
+- `verify`
+- `review`
+- `handoff`
+- `reset`
+- `resume`
+
+This path keeps runtime ownership inside Harness while letting pi host the
+command surface as an extension.
+
+## Install As A pi Package
+
+For a local install into pi:
+
+```bash
+pi install -l /absolute/path/to/harness/packages/extensions
+```
+
+For a one-off test without installing:
+
+```bash
+pi -e /absolute/path/to/harness/packages/extensions/src/pi-extension.ts
+```
+
 ## ChatGPT Subscription Setup
 
 The harness supports ChatGPT subscription auth through `provider: "openai-codex"` with `authSource: "pi-auth"`.
@@ -210,6 +264,7 @@ Primary commands:
 - Blank-repo bootstrap is present, but full end-to-end implementation from an empty repository is not yet as reliable as work inside an existing codebase.
 - `openai-codex` currently uses a subprocess bridge into local `pi-ai` code, so it depends on a local `pi-mono` checkout with installed dependencies.
 - Provider smoke and doctor commands validate readiness and a tiny live prompt, but they are not substitutes for full task-level verification.
+- The pi package path is validated locally, but no npm or git release automation is wired yet.
 
 ## Runtime State
 

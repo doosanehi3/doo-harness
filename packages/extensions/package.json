@@ -1,10 +1,33 @@
 {
   "name": "@doo/harness-extensions",
   "version": "0.0.1",
+  "description": "Harness runtime extension surfaces for pi-coding-agent",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "dependencies": {
+  "keywords": [
+    "pi-package",
+    "harness",
+    "pi-coding-agent",
+    "runtime"
+  ],
+  "files": [
+    "src",
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json --pretty false"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*"
+  },
+  "devDependencies": {
     "@mariozechner/pi-coding-agent": "^0.65.2"
+  },
+  "pi": {
+    "extensions": [
+      "./src/pi-extension.ts"
+    ]
   }
 }
