@@ -47,6 +47,8 @@ export default function harnessPiExtension(pi: ExtensionAPI): void {
         ctx.ui.setWidget?.("harness-command-result", toWidgetLines(output), {
           placement: "belowEditor"
         });
+      } else {
+        process.stdout.write(`${output}\n`);
       }
       ctx.ui.notify(summarize(output), "info");
     }
