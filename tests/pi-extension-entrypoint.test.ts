@@ -243,6 +243,40 @@ test("pi extension formats compact status into a tighter widget summary", async 
   }
 });
 
+test("pi extension formats dashboard status into widget and notification output", async () => {
+  const cwd = await createTempHarnessDir();
+  const notifications: string[] = [];
+  const widgetUpdates: string[][] = [];
+  let handler: ((args: string, ctx: any) => Promise<void> | void) | null = null;
+
+  try {
+    harnessPiExtension({
+      registerCommand(_name, options) {
+        handler = options.handler;
+      }
+    });
+
+    assert.ok(handler);
+    await handler!("status dashboard --json", {
+      cwd,
+      hasUI: true,
+      ui: {
+        notify(message: string) {
+          notifications.push(message);
+        },
+        setWidget(_key: string, content: string[] | undefined) {
+          widgetUpdates.push(content ?? []);
+        }
+      }
+    });
+
+    assert.ok(notifications.some(message => /Harness dashboard ready/i.test(message)));
+    assert.ok(widgetUpdates.some(lines => lines[0] === "Harness Dashboard"));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("pi extension formats pickup entrypoint results into widget and notification output", async () => {
   const cwd = await createTempHarnessDir();
   const notifications: string[] = [];

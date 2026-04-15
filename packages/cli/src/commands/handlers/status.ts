@@ -1,4 +1,5 @@
 import type { ArtifactMeta, RuntimeStatus } from "@doo/harness-runtime";
+import type { BlockedPayload, PickupPayload, QueuePayload } from "@doo/harness-runtime";
 import { formatStatusLine } from "../../output.js";
 
 export interface StatusView extends RuntimeStatus {
@@ -17,6 +18,20 @@ export interface CompactStatusView {
   handoffReason: string | null;
   nextAction: string | null;
   recentArtifacts: string[];
+}
+
+export interface DashboardStatusView {
+  mode: "dashboard";
+  phase: string;
+  activeTaskId: string | null;
+  activeTaskText: string | null;
+  blocker: string | null;
+  lastVerificationStatus: string | null;
+  nextAction: string | null;
+  recentArtifacts: string[];
+  blocked: BlockedPayload;
+  reviewQueue: QueuePayload;
+  pickup: PickupPayload;
 }
 
 function selectRecentArtifacts(artifacts: ArtifactMeta[], limit: number = 3): string[] {
@@ -47,6 +62,28 @@ export function buildCompactStatusView(status: RuntimeStatus, artifacts: Artifac
     handoffReason: status.handoffReason,
     nextAction: status.nextAction ?? null,
     recentArtifacts: selectRecentArtifacts(artifacts)
+  };
+}
+
+export function buildDashboardStatusView(
+  status: RuntimeStatus,
+  artifacts: ArtifactMeta[],
+  blocked: BlockedPayload,
+  reviewQueue: QueuePayload,
+  pickup: PickupPayload
+): DashboardStatusView {
+  return {
+    mode: "dashboard",
+    phase: status.phase,
+    activeTaskId: status.activeTaskId,
+    activeTaskText: status.activeTaskText,
+    blocker: status.blocker,
+    lastVerificationStatus: status.lastVerificationStatus,
+    nextAction: status.nextAction ?? null,
+    recentArtifacts: selectRecentArtifacts(artifacts, 5),
+    blocked,
+    reviewQueue,
+    pickup
   };
 }
 
@@ -104,6 +141,21 @@ export function runCompactStatus(status: CompactStatusView): string {
     `Blocker: ${status.blocker ?? "-"}`,
     `Handoff: ${status.handoffEligible ? "ready" : "not ready"}`,
     `Handoff reason: ${status.handoffReason ?? "-"}`,
+    `Recent artifacts: ${status.recentArtifacts.length > 0 ? status.recentArtifacts.join(" | ") : "-"}`,
+    `Next: ${status.nextAction ?? "-"}`
+  ].join("\n");
+}
+
+export function runDashboardStatus(status: DashboardStatusView): string {
+  return [
+    "Dashboard",
+    `Phase: ${status.phase}`,
+    `Task: ${status.activeTaskId ?? "-"}${status.activeTaskText ? ` ${status.activeTaskText}` : ""}`,
+    `Verification: ${status.lastVerificationStatus ?? "-"}`,
+    `Blocker: ${status.blocker ?? "-"}`,
+    `Pickup: ${status.pickup.pickupKind}${status.pickup.target ? ` -> ${status.pickup.target}` : ""}`,
+    `Review queue: ${status.reviewQueue.items.length}`,
+    `Blocked tasks: ${status.blocked.items.length}`,
     `Recent artifacts: ${status.recentArtifacts.length > 0 ? status.recentArtifacts.join(" | ") : "-"}`,
     `Next: ${status.nextAction ?? "-"}`
   ].join("\n");

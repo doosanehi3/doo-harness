@@ -24,7 +24,7 @@ import { runReset } from "./commands/handlers/reset.js";
 import { buildArtifactReviewPayload, buildReviewHistoryPayload, buildReviewPayload, runReview, type ReviewMode } from "./commands/handlers/review.js";
 import { buildFindPayload, buildGrepPayload, buildRecentSearchPayload, runSearch } from "./commands/handlers/search.js";
 import { runResume } from "./commands/handlers/resume.js";
-import { buildCompactStatusView, buildStatusView, runCompactStatus, runStatus } from "./commands/handlers/status.js";
+import { buildCompactStatusView, buildDashboardStatusView, buildStatusView, runCompactStatus, runDashboardStatus, runStatus } from "./commands/handlers/status.js";
 import { runTaskDone } from "./commands/handlers/task-done.js";
 import { runUnblock } from "./commands/handlers/unblock.js";
 import { runVerify } from "./commands/handlers/verify.js";
@@ -104,6 +104,32 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
 
   if (trimmed === "/status-compact-json" || trimmed === "/status compact --json") {
     return JSON.stringify(buildCompactStatusView(runtime.getStatus(), await runtime.listArtifacts()), null, 2);
+  }
+
+  if (trimmed === "/status-dashboard" || trimmed === "/status dashboard") {
+    return runDashboardStatus(
+      buildDashboardStatusView(
+        runtime.getStatus(),
+        await runtime.listArtifacts(),
+        runtime.getBlockedPayload(),
+        await runtime.getReviewQueuePayload(),
+        runtime.getPickupPayload()
+      )
+    );
+  }
+
+  if (trimmed === "/status-dashboard-json" || trimmed === "/status dashboard --json") {
+    return JSON.stringify(
+      buildDashboardStatusView(
+        runtime.getStatus(),
+        await runtime.listArtifacts(),
+        runtime.getBlockedPayload(),
+        await runtime.getReviewQueuePayload(),
+        runtime.getPickupPayload()
+      ),
+      null,
+      2
+    );
   }
 
   if (trimmed === "/artifacts" || trimmed.startsWith("/artifacts ")) {
@@ -542,6 +568,8 @@ export async function main(): Promise<void> {
     input === "/doctor" ||
     input === "/bootstrap" ||
     input === "/status-json" ||
+    input === "/status-dashboard" ||
+    input === "/status-dashboard-json" ||
     input === "/doctor-json" ||
     input.startsWith("/bootstrap ") ||
     input.startsWith("/bootstrap-json") ||

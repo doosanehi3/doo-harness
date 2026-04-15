@@ -15,7 +15,7 @@ import { runReset } from "../../cli/src/commands/handlers/reset.js";
 import { runResume } from "../../cli/src/commands/handlers/resume.js";
 import { buildArtifactReviewPayload, buildReviewHistoryPayload, buildReviewPayload, runReview, type ReviewMode } from "../../cli/src/commands/handlers/review.js";
 import { buildFindPayload, buildGrepPayload, buildRecentSearchPayload, runSearch } from "../../cli/src/commands/handlers/search.js";
-import { buildCompactStatusView, buildStatusView, runCompactStatus, runStatus } from "../../cli/src/commands/handlers/status.js";
+import { buildCompactStatusView, buildDashboardStatusView, buildStatusView, runCompactStatus, runDashboardStatus, runStatus } from "../../cli/src/commands/handlers/status.js";
 import { runVerify } from "../../cli/src/commands/handlers/verify.js";
 
 export interface PiHostedHarnessHost {
@@ -68,6 +68,30 @@ async function executeHostedCommand(runtime: HarnessRuntime, cwd: string, input:
   }
   if (trimmed === "/status-compact-json" || trimmed === "/status compact --json") {
     return JSON.stringify(buildCompactStatusView(runtime.getStatus(), await runtime.listArtifacts()), null, 2);
+  }
+  if (trimmed === "/status-dashboard" || trimmed === "/status dashboard") {
+    return runDashboardStatus(
+      buildDashboardStatusView(
+        runtime.getStatus(),
+        await runtime.listArtifacts(),
+        runtime.getBlockedPayload(),
+        await runtime.getReviewQueuePayload(),
+        runtime.getPickupPayload()
+      )
+    );
+  }
+  if (trimmed === "/status-dashboard-json" || trimmed === "/status dashboard --json") {
+    return JSON.stringify(
+      buildDashboardStatusView(
+        runtime.getStatus(),
+        await runtime.listArtifacts(),
+        runtime.getBlockedPayload(),
+        await runtime.getReviewQueuePayload(),
+        runtime.getPickupPayload()
+      ),
+      null,
+      2
+    );
   }
   if (trimmed === "/artifacts" || trimmed.startsWith("/artifacts ")) {
     const { filter, invalidFilter } = parseArtifactFilter(trimmed.replace(/^\/artifacts\s*/, ""));

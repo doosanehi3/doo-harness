@@ -209,6 +209,29 @@ test("pi-hosted bridge exposes compact status", async () => {
   }
 });
 
+test("pi-hosted bridge exposes dashboard status", async () => {
+  const cwd = await createTempHarnessDir();
+  try {
+    const bridge = createPiHostedHarnessBridge({ cwd });
+    const runtime = await bridge.getRuntime();
+    await runtime.plan("Hosted dashboard demo", true);
+    await runtime.blockCurrentTask("waiting on API schema");
+
+    const output = await bridge.execute("status dashboard --json");
+    const parsed = JSON.parse(output) as {
+      mode: string;
+      blocked: { items: unknown[] };
+      pickup: { pickupKind: string };
+    };
+
+    assert.equal(parsed.mode, "dashboard");
+    assert.ok(parsed.blocked.items.length > 0);
+    assert.equal(parsed.pickup.pickupKind, "blocked");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("pi-hosted bridge reports invalid artifact filters explicitly", async () => {
   const cwd = await createTempHarnessDir();
   try {

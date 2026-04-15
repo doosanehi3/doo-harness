@@ -22,6 +22,9 @@ export function normalizeCommandTokens(tokens: string[]): string {
       if (payload[0] === "compact") {
         return json ? "/status-compact-json" : "/status-compact";
       }
+      if (payload[0] === "dashboard") {
+        return json ? "/status-dashboard-json" : "/status-dashboard";
+      }
       return json ? "/status-json" : "/status";
     case "artifacts":
       if (payload[0] === "related") {

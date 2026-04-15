@@ -135,6 +135,17 @@ function formatWidgetFromPayload(payload: unknown): string[] | null {
     ];
   }
 
+  if (value.mode === "dashboard") {
+    return [
+      "Harness Dashboard",
+      `Phase: ${typeof value.phase === "string" ? value.phase : "-"}`,
+      `Pickup: ${typeof value.pickup === "object" && value.pickup && typeof (value.pickup as { pickupKind?: string }).pickupKind === "string" ? (value.pickup as { pickupKind: string }).pickupKind : "-"}`,
+      `Blocked: ${typeof value.blocked === "object" && value.blocked && Array.isArray((value.blocked as { items?: unknown[] }).items) ? (value.blocked as { items: unknown[] }).items.length : 0}`,
+      `Queue: ${typeof value.reviewQueue === "object" && value.reviewQueue && Array.isArray((value.reviewQueue as { items?: unknown[] }).items) ? (value.reviewQueue as { items: unknown[] }).items.length : 0}`,
+      `Next: ${typeof value.nextAction === "string" ? value.nextAction : "-"}`
+    ];
+  }
+
   if (typeof value.phase === "string") {
     const recentArtifacts = Array.isArray(value.recentArtifacts) ? (value.recentArtifacts as string[]).slice(0, 2) : [];
     return [
@@ -190,6 +201,9 @@ function summarize(input: string, output: string): string {
   }
   if (payload && payload.mode === "timeline" && Array.isArray(payload.items)) {
     return `Harness timeline: ${payload.items.length} event(s)`;
+  }
+  if (payload && payload.mode === "dashboard") {
+    return "Harness dashboard ready.";
   }
   if (payload && typeof payload.phase === "string") {
     const task = typeof payload.activeTaskId === "string" ? ` ${payload.activeTaskId}` : "";

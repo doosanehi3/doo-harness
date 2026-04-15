@@ -117,6 +117,30 @@ test("status compact json returns a machine-readable compact summary", async () 
   }
 });
 
+test("status dashboard json returns a grouped action-oriented summary", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-status-dashboard-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI status dashboard demo", true);
+    await runtime.blockCurrentTask("waiting on API schema");
+
+    const output = await runCli(cwd, "status", "dashboard", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      blocked: { items: unknown[] };
+      reviewQueue: { items: unknown[] };
+      pickup: { pickupKind: string };
+    };
+
+    assert.equal(parsed.mode, "dashboard");
+    assert.ok(parsed.blocked.items.length > 0);
+    assert.ok(Array.isArray(parsed.reviewQueue.items));
+    assert.equal(parsed.pickup.pickupKind, "blocked");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("split-arg slash-form status compact json resolves to the compact status surface", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-status-compact-slash-"));
   try {
