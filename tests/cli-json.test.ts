@@ -1007,6 +1007,29 @@ test("recent-json returns recent artifact recall payload", async () => {
   }
 });
 
+test("recent-json groups unfiltered artifacts by type", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-recent-groups-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI recent groups demo", true);
+    await runtime.executeCurrentTask();
+    await runtime.verify();
+    await runtime.review();
+
+    const output = await runCli(cwd, "recent", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      groups: Array<{ label: string; matches: string[] }>;
+    };
+
+    assert.equal(parsed.mode, "recent");
+    assert.ok(parsed.groups.some(group => group.label === "recent review"));
+    assert.ok(parsed.groups.some(group => group.label === "recent verification"));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("artifacts and recent report invalid filters explicitly", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-invalid-filter-"));
   try {
@@ -1132,6 +1155,40 @@ test("artifacts related <taskId> --json stays machine-readable on the CLI path",
     assert.equal(parsed.mode, "related");
     assert.equal(parsed.targetTaskId, "T1");
     assert.ok(parsed.items.length > 0);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("artifacts related for a non-active task marks session artifacts as supporting", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-related-supporting-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI related supporting demo", true);
+    await runtime.executeCurrentTask();
+    await runtime.verify();
+
+    const taskState = runtime.getTaskStateSnapshot();
+    taskState.taskTexts.T9 = "Older task";
+    taskState.taskOutputs.T9 = join(cwd, ".harness", "artifacts", "legacy-output.md");
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(taskState.taskOutputs.T9, "legacy output\n", "utf8");
+    const { saveTaskState } = await import("../packages/harness-runtime/src/state/task-state.js");
+    await saveTaskState(join(cwd, ".harness", "artifacts", "task-state.json"), taskState);
+
+    const output = await runCli(cwd, "artifacts", "related", "T9", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      targetTaskId: string | null;
+      items: Array<{ type: string; relevance: string }>;
+      groups: Array<{ label: string }>;
+    };
+
+    assert.equal(parsed.mode, "related");
+    assert.equal(parsed.targetTaskId, "T9");
+    assert.ok(parsed.items.some(item => item.type === "task-output" && item.relevance === "exact"));
+    assert.ok(parsed.items.some(item => item.type === "verification" && item.relevance === "supporting"));
+    assert.ok(parsed.groups.some(group => group.label === "supporting"));
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

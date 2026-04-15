@@ -120,6 +120,12 @@ export function buildRecentSearchPayload(
   const { filter } = parseArtifactFilter(rawFilter);
   const filtered = filterArtifacts(artifacts, filter).slice(0, SEARCH_LIMIT);
   const matches = filtered.map(item => item.path);
+  const grouped = new Map<string, string[]>();
+  for (const artifact of filtered) {
+    const bucket = grouped.get(artifact.type) ?? [];
+    bucket.push(artifact.path);
+    grouped.set(artifact.type, bucket);
+  }
 
   return {
     mode: "recent",
@@ -129,12 +135,15 @@ export function buildRecentSearchPayload(
     taskId: status.activeTaskId,
     taskText: status.activeTaskText,
     matches,
-    groups: [
-      {
-        label: filter ? `recent ${filter}` : "recent artifacts",
-        matches
-      }
-    ],
+    groups:
+      filter !== null
+        ? [
+            {
+              label: `recent ${filter}`,
+              matches
+            }
+          ]
+        : [...grouped.entries()].map(([label, entries]) => ({ label: `recent ${label}`, matches: entries })),
     truncated: false,
     command: `runtime.listArtifacts(${filter ? `filter=${filter}` : "all"})`
   };

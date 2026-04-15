@@ -156,6 +156,7 @@ export interface RelatedArtifactEntry {
   kind: "artifact" | "task-output";
   type: string;
   path: string;
+  relevance: "exact" | "supporting";
   reason: string;
 }
 
@@ -165,6 +166,7 @@ export interface RelatedArtifactsPayload {
   targetTaskText: string | null;
   phase: string;
   items: RelatedArtifactEntry[];
+  groups: Array<{ label: string; items: RelatedArtifactEntry[] }>;
   summary: string;
 }
 
@@ -1211,17 +1213,18 @@ export class HarnessRuntime {
       seen.add(entry.path);
       items.push(entry);
     };
+    const exactTarget = taskId !== null && taskId === status.activeTaskId;
 
     if (status.activeSpecPath) {
-      push({ kind: "artifact", type: "spec", path: status.activeSpecPath, reason: "active spec" });
+      push({ kind: "artifact", type: "spec", path: status.activeSpecPath, relevance: "supporting", reason: "active spec" });
     }
     if (status.activePlanPath) {
-      push({ kind: "artifact", type: "plan", path: status.activePlanPath, reason: "active plan" });
+      push({ kind: "artifact", type: "plan", path: status.activePlanPath, relevance: "supporting", reason: "active plan" });
     }
 
     const milestonePath = join(this.session.cwd, ".harness", "artifacts", "milestones.md");
     if (existsSync(milestonePath)) {
-      push({ kind: "artifact", type: "milestones", path: milestonePath, reason: "active milestone ledger" });
+      push({ kind: "artifact", type: "milestones", path: milestonePath, relevance: "supporting", reason: "active milestone ledger" });
     }
 
     if (taskId && this.session.taskState.taskOutputs[taskId]) {
@@ -1229,6 +1232,7 @@ export class HarnessRuntime {
         kind: "task-output",
         type: "task-output",
         path: this.session.taskState.taskOutputs[taskId]!,
+        relevance: "exact",
         reason: "active task output"
       });
     }
@@ -1238,7 +1242,8 @@ export class HarnessRuntime {
         kind: "artifact",
         type: "verification",
         path: this.session.state.lastVerificationPath,
-        reason: "latest verification"
+        relevance: exactTarget ? "exact" : "supporting",
+        reason: exactTarget ? "verification for current active task" : "latest verification in session"
       });
     }
     if (this.session.state.lastReviewPath) {
@@ -1246,7 +1251,8 @@ export class HarnessRuntime {
         kind: "artifact",
         type: "review",
         path: this.session.state.lastReviewPath,
-        reason: "latest review"
+        relevance: exactTarget ? "exact" : "supporting",
+        reason: exactTarget ? "review for current active task" : "latest review in session"
       });
     }
     if (this.session.state.lastHandoffPath) {
@@ -1254,14 +1260,18 @@ export class HarnessRuntime {
         kind: "artifact",
         type: "handoff",
         path: this.session.state.lastHandoffPath,
-        reason: "latest handoff"
+        relevance: exactTarget ? "exact" : "supporting",
+        reason: exactTarget ? "handoff for current active task/session" : "latest handoff in session"
       });
     }
 
     const taskStatePath = join(this.session.cwd, ".harness", "artifacts", "task-state.json");
     if (existsSync(taskStatePath)) {
-      push({ kind: "artifact", type: "task_state", path: taskStatePath, reason: "runtime task ledger" });
+      push({ kind: "artifact", type: "task_state", path: taskStatePath, relevance: "supporting", reason: "runtime task ledger" });
     }
+
+    const exactItems = items.filter(item => item.relevance === "exact");
+    const supportingItems = items.filter(item => item.relevance === "supporting");
 
     return {
       mode: "related",
@@ -1269,7 +1279,14 @@ export class HarnessRuntime {
       targetTaskText: taskId ? this.session.taskState.taskTexts[taskId] ?? null : null,
       phase: status.phase,
       items,
-      summary: items.length > 0 ? `${items.length} related artifact(s).` : "No related artifacts found."
+      groups: [
+        { label: "exact", items: exactItems },
+        { label: "supporting", items: supportingItems }
+      ].filter(group => group.items.length > 0),
+      summary:
+        items.length > 0
+          ? `${exactItems.length} exact and ${supportingItems.length} supporting related artifact(s).`
+          : "No related artifacts found."
     };
   }
 

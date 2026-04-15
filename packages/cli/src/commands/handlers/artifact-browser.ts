@@ -5,7 +5,10 @@ export function runRelatedArtifacts(payload: RelatedArtifactsPayload): string {
     payload.summary,
     `Phase: ${payload.phase}`,
     `Target task: ${payload.targetTaskId ?? "-"}${payload.targetTaskText ? ` ${payload.targetTaskText}` : ""}`,
-    ...payload.items.flatMap(item => [`- ${item.kind}/${item.type}: ${item.path}`, `  ${item.reason}`])
+    ...payload.groups.flatMap(group => [
+      `${group.label}:`,
+      ...group.items.flatMap(item => [`- ${item.kind}/${item.type}: ${item.path}`, `  ${item.reason}`])
+    ])
   ].join("\n");
 }
 
