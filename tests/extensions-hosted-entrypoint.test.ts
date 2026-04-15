@@ -132,6 +132,46 @@ test("pi-hosted bridge reports invalid artifact filters explicitly", async () =>
   }
 });
 
+test("pi-hosted bridge exposes blocked, queue, and pickup entrypoints", async () => {
+  const cwd = await createTempHarnessDir();
+  try {
+    const bridge = createPiHostedHarnessBridge({ cwd });
+    const runtime = await bridge.getRuntime();
+    await runtime.plan("Hosted entrypoint wave demo", true);
+    await runtime.blockCurrentTask("waiting on API schema");
+
+    const blockedOutput = await bridge.execute("blocked --json");
+    const blocked = JSON.parse(blockedOutput) as {
+      mode: string;
+      items: Array<{ taskId: string }>;
+    };
+    assert.equal(blocked.mode, "blocked");
+    assert.ok(blocked.items.some(item => item.taskId === "T1"));
+
+    await runtime.unblockCurrentTask();
+    await runtime.executeCurrentTask();
+    await runtime.verify();
+
+    const queueOutput = await bridge.execute("queue review --json");
+    const queue = JSON.parse(queueOutput) as {
+      mode: string;
+      items: Array<{ label: string }>;
+    };
+    assert.equal(queue.mode, "queue");
+    assert.ok(queue.items.length > 0);
+
+    const pickupOutput = await bridge.execute("pickup --json");
+    const pickup = JSON.parse(pickupOutput) as {
+      mode: string;
+      pickupKind: string;
+    };
+    assert.equal(pickup.mode, "pickup");
+    assert.ok(["active-task", "blocked", "ready-task", "waiting", "idle"].includes(pickup.pickupKind));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("pi-hosted bridge accepts slash-form compact status and rejects invalid artifact filters", async () => {
   const cwd = await createTempHarnessDir();
   try {

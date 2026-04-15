@@ -944,6 +944,72 @@ test("artifacts and recent report invalid filters explicitly", async () => {
   }
 });
 
+test("blocked-json reports blocked tasks and blockers", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-blocked-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI blocked queue demo", true);
+    await runtime.blockCurrentTask("waiting on API schema");
+
+    const output = await runCli(cwd, "blocked", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      items: Array<{ taskId: string; blocker: string }>;
+    };
+
+    assert.equal(parsed.mode, "blocked");
+    assert.ok(parsed.items.some(item => item.taskId === "T1" && /API schema/.test(item.blocker)));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("queue review json reports review-related work", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-queue-review-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI review queue demo", true);
+    await runtime.executeCurrentTask();
+    await runtime.verify();
+
+    const output = await runCli(cwd, "queue", "review", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      queue: string;
+      items: Array<{ kind: string; label: string }>;
+    };
+
+    assert.equal(parsed.mode, "queue");
+    assert.equal(parsed.queue, "review");
+    assert.ok(parsed.items.length > 0);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("pickup-json reports the next safe work recommendation", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-pickup-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI pickup demo", true);
+
+    const output = await runCli(cwd, "pickup", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      pickupKind: string;
+      target: string | null;
+      nextAction: string | null;
+    };
+
+    assert.equal(parsed.mode, "pickup");
+    assert.equal(parsed.pickupKind, "active-task");
+    assert.equal(parsed.target, "T1");
+    assert.match(parsed.nextAction ?? "", /\/continue/);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("recent-json rejects invalid artifact filters instead of broadening scope", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-recent-invalid-filter-"));
   try {

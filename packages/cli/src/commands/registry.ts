@@ -6,6 +6,7 @@ export const COMMANDS = [
   "execute",
   "task-done",
   "block",
+  "blocked",
   "unblock",
   "continue",
   "find",
@@ -18,6 +19,8 @@ export const COMMANDS = [
   "advance",
   "status",
   "artifacts",
+  "pickup",
+  "queue",
   "handoff",
   "reset"
 ] as const;

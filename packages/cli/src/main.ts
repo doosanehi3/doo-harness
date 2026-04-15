@@ -8,6 +8,7 @@ import { runBlock } from "./commands/handlers/block.js";
 import { runContinue } from "./commands/handlers/continue.js";
 import { runConfigInit, runConfigShow } from "./commands/handlers/config-init.js";
 import { runExecute } from "./commands/handlers/execute.js";
+import { runBlocked, runPickup, runQueue } from "./commands/handlers/entrypoints.js";
 import { runHandoff } from "./commands/handlers/handoff.js";
 import { buildHelpPayload, runHelp } from "./commands/handlers/help.js";
 import { runLongRun } from "./commands/handlers/longrun.js";
@@ -28,6 +29,7 @@ import { runVerify } from "./commands/handlers/verify.js";
 import { runWebSmoke } from "./commands/handlers/web-smoke.js";
 import { runWebVerify } from "./commands/handlers/web-verify.js";
 import { renderRuntimePanel } from "../../tui/src/index.js";
+import { normalizeCommandTokens } from "./commands/normalize-input.js";
 
 function parseCliInvocation(argv: string[]): { runtimeCwd: string; input: string } {
   const args = [...argv];
@@ -63,101 +65,7 @@ function parseCliInvocation(argv: string[]): { runtimeCwd: string; input: string
 }
 
 function normalizeCliInput(args: string[]): string {
-  const trimmedArgs = args.map(arg => arg.trim()).filter(Boolean);
-  if (trimmedArgs.length === 0) {
-    return "";
-  }
-
-  const [command, ...rest] = trimmedArgs;
-  if (command.startsWith("/")) {
-    return trimmedArgs.join(" ").trim();
-  }
-
-  const json = rest.includes("--json");
-  const payload = rest.filter(token => token !== "--json");
-  const join = (base: string, parts: string[] = []): string => [base, ...parts].join(" ").trim();
-
-  switch (command) {
-    case "help":
-      return json ? "/help-json" : "/help";
-    case "status":
-      if (payload[0] === "compact") {
-        return json ? "/status-compact-json" : "/status-compact";
-      }
-      return json ? "/status-json" : "/status";
-    case "artifacts":
-      return json ? join("/artifacts-json", payload) : join("/artifacts", payload);
-    case "plan":
-      return json ? join("/plan-json", payload) : join("/plan", payload);
-    case "longrun":
-      return json ? join("/longrun-json", payload) : join("/longrun", payload);
-    case "continue":
-      return json ? "/continue-json" : "/continue";
-    case "find":
-      return json ? join("/find-json", payload) : join("/find", payload);
-    case "grep":
-      return json ? join("/grep-json", payload) : join("/grep", payload);
-    case "recent":
-      return json ? join("/recent-json", payload) : join("/recent", payload);
-    case "loop":
-      return json ? join("/loop-json", payload) : join("/loop", payload);
-    case "execute":
-      return json ? "/execute-json" : "/execute";
-    case "verify":
-      return json ? "/verify-json" : "/verify";
-    case "review":
-      return json ? join("/review-json", payload) : join("/review", payload);
-    case "handoff":
-      return json ? "/handoff-json" : "/handoff";
-    case "advance":
-      return json ? "/advance-json" : "/advance";
-    case "resume":
-      return json ? "/resume-json" : "/resume";
-    case "reset":
-      return json ? "/reset-json" : "/reset";
-    case "unblock":
-      return json ? "/unblock-json" : "/unblock";
-    case "block":
-      return json ? join("/block-json", payload) : join("/block", payload);
-    case "config": {
-      const [action, ...configArgs] = payload;
-      if (action === "show") {
-        return "/config-show";
-      }
-      if (action === "init") {
-        if (configArgs[0] === "openai-codex") {
-          return "/config-init-openai-codex";
-        }
-        return join("/config-init", configArgs);
-      }
-      return trimmedArgs.join(" ").trim();
-    }
-    case "provider": {
-      const [action, ...providerArgs] = payload;
-      if (action === "check") {
-        return json ? "/provider-check-json" : "/provider-check";
-      }
-      if (action === "doctor") {
-        return json ? "/provider-doctor-json" : "/provider-doctor";
-      }
-      if (action === "smoke") {
-        return json ? join("/provider-smoke-json", providerArgs) : join("/provider-smoke", providerArgs);
-      }
-      return trimmedArgs.join(" ").trim();
-    }
-    case "web": {
-      const [action] = payload;
-      if (action === "smoke") {
-        return json ? "/web-smoke-json" : "/web-smoke";
-      }
-      if (action === "verify") {
-        return json ? "/web-verify-json" : "/web-verify";
-      }
-      return trimmedArgs.join(" ").trim();
-    }
-    default:
-      return trimmedArgs.join(" ").trim();
-  }
+  return normalizeCommandTokens(args);
 }
 
 async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: string): Promise<string> {
@@ -283,6 +191,14 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
     return JSON.stringify({ result: await runtime.continueTaskLoop(), status: runtime.getStatus() }, null, 2);
   }
 
+  if (trimmed === "/blocked") {
+    return runBlocked(runtime.getBlockedPayload());
+  }
+
+  if (trimmed === "/blocked-json") {
+    return JSON.stringify(runtime.getBlockedPayload(), null, 2);
+  }
+
   if (trimmed.startsWith("/find-json")) {
     const query = trimmed.replace(/^\/find-json\s*/, "");
     return JSON.stringify(await buildFindPayload(runtimeCwd, query, runtime.getStatus()), null, 2);
@@ -323,6 +239,22 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
       null,
       2
     );
+  }
+
+  if (trimmed === "/queue-review") {
+    return runQueue(await runtime.getReviewQueuePayload());
+  }
+
+  if (trimmed === "/queue-review-json") {
+    return JSON.stringify(await runtime.getReviewQueuePayload(), null, 2);
+  }
+
+  if (trimmed === "/pickup") {
+    return runPickup(runtime.getPickupPayload());
+  }
+
+  if (trimmed === "/pickup-json") {
+    return JSON.stringify(runtime.getPickupPayload(), null, 2);
   }
 
   if (trimmed.startsWith("/loop-json")) {
@@ -550,8 +482,11 @@ export async function main(): Promise<void> {
     input === "/web-verify-json" ||
     input === "/artifacts-json" ||
     input === "/advance-json" ||
+    input === "/blocked-json" ||
     input === "/continue-json" ||
     input === "/execute-json" ||
+    input === "/pickup-json" ||
+    input === "/queue-review-json" ||
     input.startsWith("/block-json") ||
     input === "/unblock-json" ||
     input === "/resume-json" ||

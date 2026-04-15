@@ -16,7 +16,8 @@ export function buildHelpPayload(): HelpPayload {
       "Check provider readiness: harness provider check or harness provider doctor",
       "Start work: harness plan <goal> or harness longrun <goal>",
       "Drive the operator loop: harness help, harness status, harness status compact, harness verify, harness handoff, harness reset, harness resume",
-      "Review or relocate context: harness review quick|diff|deep, harness find <name>, harness grep <text>, harness recent review"
+      "Review or relocate context: harness review quick|diff|deep, harness find <name>, harness grep <text>, harness recent review",
+      "Operational entrypoints: harness blocked, harness queue review, harness pickup"
     ],
     commandGroups: [
       {
@@ -66,6 +67,14 @@ export function buildHelpPayload(): HelpPayload {
           "harness resume [--json]",
           "harness reset [--json]",
           "harness handoff [--json]"
+        ]
+      },
+      {
+        title: "Operational Entry Points",
+        commands: [
+          "harness blocked [--json]",
+          "harness queue review [--json]",
+          "harness pickup [--json]"
         ]
       },
       {

@@ -60,6 +60,33 @@ function formatWidgetFromPayload(payload: unknown): string[] | null {
     ];
   }
 
+  if (value.mode === "blocked" && Array.isArray(value.items)) {
+    return [
+      "Harness Blocked",
+      `Phase: ${typeof value.phase === "string" ? value.phase : "-"}`,
+      ...(value.items as Array<{ taskId?: string; blocker?: string }>).slice(0, 4).map(
+        item => `${item.taskId ?? "-"}: ${item.blocker ?? "-"}`
+      )
+    ];
+  }
+
+  if (value.mode === "queue" && Array.isArray(value.items)) {
+    return [
+      "Harness Queue",
+      `Queue: ${typeof value.queue === "string" ? value.queue : "-"}`,
+      ...(value.items as Array<{ label?: string }>).slice(0, 4).map(item => item.label ?? "-")
+    ];
+  }
+
+  if (value.mode === "pickup") {
+    return [
+      "Harness Pickup",
+      `Kind: ${typeof value.pickupKind === "string" ? value.pickupKind : "-"}`,
+      `Target: ${typeof value.target === "string" ? value.target : "-"}`,
+      `Next: ${typeof value.nextAction === "string" ? value.nextAction : "-"}`
+    ];
+  }
+
   if (typeof value.phase === "string") {
     const recentArtifacts = Array.isArray(value.recentArtifacts) ? (value.recentArtifacts as string[]).slice(0, 2) : [];
     return [
@@ -94,6 +121,15 @@ function summarize(input: string, output: string): string {
   }
   if (payload && (payload.mode === "find" || payload.mode === "grep" || payload.mode === "recent") && Array.isArray(payload.matches)) {
     return `Harness ${String(payload.mode)}: ${payload.matches.length} matches`;
+  }
+  if (payload && payload.mode === "blocked" && Array.isArray(payload.items)) {
+    return `Harness blocked: ${payload.items.length} task(s)`;
+  }
+  if (payload && payload.mode === "queue" && Array.isArray(payload.items)) {
+    return `Harness queue: ${payload.items.length} item(s)`;
+  }
+  if (payload && payload.mode === "pickup") {
+    return `Harness pickup: ${typeof payload.pickupKind === "string" ? payload.pickupKind : "ready"}`;
   }
   if (payload && typeof payload.phase === "string") {
     const task = typeof payload.activeTaskId === "string" ? ` ${payload.activeTaskId}` : "";

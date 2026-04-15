@@ -2,9 +2,11 @@ import { createPiSubstrateAdapter, type PiSubstrateAdapter } from "../../ai/src/
 import { HarnessRuntime } from "../../harness-runtime/src/index.js";
 import { formatInvalidArtifactFilter, parseArtifactFilter, runArtifacts } from "../../cli/src/commands/handlers/artifacts.js";
 import { runContinue } from "../../cli/src/commands/handlers/continue.js";
+import { runBlocked, runPickup, runQueue } from "../../cli/src/commands/handlers/entrypoints.js";
 import { buildHelpPayload, runHelp } from "../../cli/src/commands/handlers/help.js";
 import { runHandoff } from "../../cli/src/commands/handlers/handoff.js";
 import { runLongRun } from "../../cli/src/commands/handlers/longrun.js";
+import { normalizeCommandString } from "../../cli/src/commands/normalize-input.js";
 import { runPlan } from "../../cli/src/commands/handlers/plan.js";
 import { buildRecentPayload, runRecent } from "../../cli/src/commands/handlers/recent.js";
 import { runReset } from "../../cli/src/commands/handlers/reset.js";
@@ -25,58 +27,6 @@ export interface PiHostedHarnessBridge {
   getRuntime(): Promise<HarnessRuntime>;
 }
 
-function normalizeHostedInput(input: string): string {
-  const trimmed = input.trim();
-  if (!trimmed) {
-    return "/status";
-  }
-  if (trimmed.startsWith("/")) {
-    return trimmed;
-  }
-
-  const parts = trimmed.split(/\s+/).filter(Boolean);
-  const [command, ...rest] = parts;
-  const json = rest.includes("--json");
-  const payload = rest.filter(token => token !== "--json");
-  const join = (base: string, args: string[] = []) => [base, ...args].join(" ").trim();
-
-  switch (command) {
-    case "help":
-      return json ? "/help-json" : "/help";
-    case "status":
-      if (payload[0] === "compact") {
-        return json ? "/status-compact-json" : "/status-compact";
-      }
-      return json ? "/status-json" : "/status";
-    case "artifacts":
-      return json ? join("/artifacts-json", payload) : join("/artifacts", payload);
-    case "plan":
-      return json ? join("/plan-json", payload) : join("/plan", payload);
-    case "longrun":
-      return json ? join("/longrun-json", payload) : join("/longrun", payload);
-    case "continue":
-      return json ? "/continue-json" : "/continue";
-    case "find":
-      return json ? join("/find-json", payload) : join("/find", payload);
-    case "grep":
-      return json ? join("/grep-json", payload) : join("/grep", payload);
-    case "recent":
-      return json ? join("/recent-json", payload) : join("/recent", payload);
-    case "verify":
-      return json ? "/verify-json" : "/verify";
-    case "review":
-      return json ? join("/review-json", payload) : join("/review", payload);
-    case "handoff":
-      return json ? "/handoff-json" : "/handoff";
-    case "resume":
-      return json ? "/resume-json" : "/resume";
-    case "reset":
-      return json ? "/reset-json" : "/reset";
-    default:
-      return trimmed;
-  }
-}
-
 function createHostedAdapter(host: PiHostedHarnessHost): PiSubstrateAdapter {
   return createPiSubstrateAdapter({
     session: {
@@ -90,7 +40,7 @@ function createHostedAdapter(host: PiHostedHarnessHost): PiSubstrateAdapter {
 }
 
 async function executeHostedCommand(runtime: HarnessRuntime, cwd: string, input: string): Promise<string> {
-  const trimmed = normalizeHostedInput(input);
+  const trimmed = normalizeCommandString(input);
   const statusPayload = buildStatusView(runtime.getStatus(), await runtime.listArtifacts());
 
   if (trimmed === "/help") {
@@ -152,6 +102,12 @@ async function executeHostedCommand(runtime: HarnessRuntime, cwd: string, input:
   if (trimmed === "/continue-json") {
     return JSON.stringify({ result: await runtime.continueTaskLoop(), status: runtime.getStatus() }, null, 2);
   }
+  if (trimmed === "/blocked") {
+    return runBlocked(runtime.getBlockedPayload());
+  }
+  if (trimmed === "/blocked-json") {
+    return JSON.stringify(runtime.getBlockedPayload(), null, 2);
+  }
   if (trimmed.startsWith("/find-json")) {
     const query = trimmed.replace(/^\/find-json\s*/, "");
     return JSON.stringify(await buildFindPayload(cwd, query, runtime.getStatus()), null, 2);
@@ -187,6 +143,18 @@ async function executeHostedCommand(runtime: HarnessRuntime, cwd: string, input:
       null,
       2
     );
+  }
+  if (trimmed === "/queue-review") {
+    return runQueue(await runtime.getReviewQueuePayload());
+  }
+  if (trimmed === "/queue-review-json") {
+    return JSON.stringify(await runtime.getReviewQueuePayload(), null, 2);
+  }
+  if (trimmed === "/pickup") {
+    return runPickup(runtime.getPickupPayload());
+  }
+  if (trimmed === "/pickup-json") {
+    return JSON.stringify(runtime.getPickupPayload(), null, 2);
   }
   if (trimmed === "/verify") {
     return runVerify((await runtime.verify()).path);
