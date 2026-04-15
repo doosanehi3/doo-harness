@@ -106,10 +106,16 @@ function formatWidgetFromPayload(payload: unknown): string[] | null {
   }
 
   if (value.mode === "related" && Array.isArray(value.items)) {
+    const exact = Array.isArray(value.groups)
+      ? ((value.groups as Array<{ label?: string; items?: Array<{ path?: string }> }>).find(group => group.label === "exact")?.items ?? [])
+      : [];
     return [
       "Harness Related",
       `Task: ${typeof value.targetTaskId === "string" ? value.targetTaskId : "-"}`,
-      ...(value.items as Array<{ path?: string }>).slice(0, 4).map(item => item.path ?? "-")
+      `Exact: ${exact.length}`,
+      ...(value.items as Array<{ path?: string; relevance?: string }>).slice(0, 4).map(
+        item => `${item.relevance ?? "supporting"}: ${item.path ?? "-"}`
+      )
     ];
   }
 

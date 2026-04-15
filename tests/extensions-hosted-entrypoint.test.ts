@@ -213,10 +213,12 @@ test("pi-hosted bridge exposes related artifacts and timeline entrypoints", asyn
     const relatedOutput = await bridge.execute("artifacts related --json");
     const related = JSON.parse(relatedOutput) as {
       mode: string;
-      items: Array<{ type: string }>;
+      items: Array<{ type: string; relevance: string }>;
+      groups: Array<{ label: string }>;
     };
     assert.equal(related.mode, "related");
     assert.ok(related.items.some(item => item.type === "verification"));
+    assert.ok(related.groups.some(item => item.label === "exact"));
 
     const timelineOutput = await bridge.execute("timeline --json");
     const timeline = JSON.parse(timelineOutput) as {

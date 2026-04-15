@@ -1100,13 +1100,15 @@ test("artifacts related json reports active-task related artifacts", async () =>
     const parsed = JSON.parse(extractJsonPayload(output)) as {
       mode: string;
       targetTaskId: string | null;
-      items: Array<{ type: string; path: string }>;
+      items: Array<{ type: string; path: string; relevance: string }>;
+      groups: Array<{ label: string; items: Array<{ path: string }> }>;
     };
 
     assert.equal(parsed.mode, "related");
     assert.equal(parsed.targetTaskId, "T1");
-    assert.ok(parsed.items.some(item => item.type === "task-output"));
+    assert.ok(parsed.items.some(item => item.type === "task-output" && item.relevance === "exact"));
     assert.ok(parsed.items.some(item => item.type === "verification"));
+    assert.ok(parsed.groups.some(group => group.label === "exact"));
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
