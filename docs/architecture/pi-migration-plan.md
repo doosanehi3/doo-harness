@@ -128,3 +128,11 @@ Instead:
 4. re-evaluate after each step
 
 This keeps the current value while lowering long-term maintenance cost.
+
+## Related Product Work
+
+Migration is not the whole product plan.
+
+For post-v1 product improvements above the migration baseline, see:
+
+- [v2-product-improvement-plan.md](/Users/baekdoosan/Documents/DOO/harness/docs/architecture/v2-product-improvement-plan.md)
