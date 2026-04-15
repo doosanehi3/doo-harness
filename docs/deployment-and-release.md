@@ -56,7 +56,8 @@ Still product work, not architecture work:
 - [x] `pnpm run test`
 - [x] real pi CLI smoke in print mode
 - [x] install-from-path smoke script
-- [ ] interactive pi session smoke with widget rendering
+- [x] interactive pi session launch and slash-command acceptance smoke
+- [ ] interactive widget/notification rendering capture
 - [ ] run install-from-path smoke as a release gate in CI or release process
 
 ## Recommended Next Release Gate
@@ -75,6 +76,8 @@ Before calling the package shippable:
 
 - The main product architecture is no longer the blocker.
 - Remaining work is packaging, documentation, and release discipline.
+- Scriptable print/install smoke is still flaky and should be treated as a
+  stabilization task, not a release-blocking invariant yet.
 
 ## Fresh Machine Expectations
 
