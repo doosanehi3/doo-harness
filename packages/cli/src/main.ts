@@ -44,6 +44,7 @@ import {
   buildCompactStatusView,
   buildDashboardStatusView,
   buildLaneStatusView,
+  buildNotesStatusView,
   buildReadinessStatusView,
   buildShipStatusView,
   buildTodayStatusView,
@@ -51,6 +52,7 @@ import {
   runCompactStatus,
   runDashboardStatus,
   runLaneStatus,
+  runNotesStatus,
   runReadinessStatus,
   runShipStatus,
   runTodayStatus,
@@ -117,6 +119,11 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
   );
   const readinessPayload = buildReadinessStatusView(runtimeStatus, doctorPayload);
   const shipPayload = buildShipStatusView(readinessPayload);
+  const notesPayload = buildNotesStatusView({
+    status: runtimeStatus,
+    readiness: readinessPayload,
+    ship: shipPayload
+  });
   const helpPayload = buildHelpPayload({
     phase: runtimeStatus.phase,
     goalSummary: runtimeStatus.goalSummary,
@@ -175,6 +182,14 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
       null,
       2
     );
+  }
+
+  if (trimmed === "/status-notes" || trimmed === "/status notes") {
+    return runNotesStatus(notesPayload);
+  }
+
+  if (trimmed === "/status-notes-json" || trimmed === "/status notes --json") {
+    return JSON.stringify(notesPayload, null, 2);
   }
 
   if (trimmed === "/status-readiness" || trimmed === "/status readiness") {
@@ -790,6 +805,10 @@ export async function main(): Promise<void> {
     input === "/status-json" ||
     input === "/status-dashboard" ||
     input === "/status-dashboard-json" ||
+    input === "/status-notes" ||
+    input === "/status-notes-json" ||
+    input === "/status notes" ||
+    input === "/status notes --json" ||
     input === "/status-today" ||
     input === "/status-today-json" ||
     input === "/status today" ||

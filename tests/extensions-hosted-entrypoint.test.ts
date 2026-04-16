@@ -140,6 +140,18 @@ test("pi-hosted bridge can plan and expose runtime status", async () => {
     assert.ok(ship.recommendedCommand.length > 0);
     assert.ok(ship.releaseChecks.length > 0);
 
+    const notesOutput = await bridge.execute("status notes --json");
+    const notes = JSON.parse(notesOutput) as {
+      mode: string;
+      summary: string;
+      validation: string[];
+      followUp: string[];
+    };
+    assert.equal(notes.mode, "notes");
+    assert.ok(notes.summary.length > 0);
+    assert.ok(notes.validation.length > 0);
+    assert.ok(notes.followUp.length > 0);
+
     const todayOutput = await bridge.execute("status today --json");
     const today = JSON.parse(todayOutput) as {
       mode: string;

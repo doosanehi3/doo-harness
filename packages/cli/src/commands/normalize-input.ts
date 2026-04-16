@@ -21,6 +21,9 @@ export function normalizeCommandTokens(tokens: string[]): string {
     case "doctor":
       return json ? "/doctor-json" : "/doctor";
     case "status":
+      if (payload[0] === "notes") {
+        return json ? "/status-notes-json" : "/status-notes";
+      }
       if (payload[0] === "today") {
         return json ? "/status-today-json" : "/status-today";
       }

@@ -97,6 +97,16 @@ function formatWidgetFromPayload(payload: unknown): string[] | null {
     ];
   }
 
+  if (value.mode === "notes") {
+    return [
+      "Harness Notes",
+      `Phase: ${typeof value.phase === "string" ? value.phase : "-"}`,
+      `Summary: ${typeof value.summary === "string" ? value.summary : "-"}`,
+      `Validation: ${Array.isArray(value.validation) ? (value.validation as string[]).length : 0}`,
+      `Follow-up: ${Array.isArray(value.followUp) ? (value.followUp as string[]).length : 0}`
+    ];
+  }
+
   if (value.mode === "handoff-inspect") {
     return [
       "Harness Handoff",
@@ -305,6 +315,9 @@ function summarize(input: string, output: string): string {
   }
   if (payload && payload.mode === "today") {
     return "Harness today ready.";
+  }
+  if (payload && payload.mode === "notes") {
+    return "Harness notes ready.";
   }
   if (payload && payload.mode === "artifact-inspect") {
     return "Harness artifact inspect ready.";

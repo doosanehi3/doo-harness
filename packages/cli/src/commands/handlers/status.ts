@@ -98,6 +98,14 @@ export interface TodayStatusView {
   summary: string;
 }
 
+export interface NotesStatusView {
+  mode: "notes";
+  phase: string;
+  summary: string;
+  validation: string[];
+  followUp: string[];
+}
+
 function formatRecommendationSummary(command: string, reason: string): string {
   return `${command} first. ${reason}`;
 }
@@ -299,6 +307,23 @@ export function buildTodayStatusView(input: {
   };
 }
 
+export function buildNotesStatusView(input: {
+  status: RuntimeStatus;
+  readiness: ReadinessStatusView;
+  ship: ShipStatusView;
+}): NotesStatusView {
+  return {
+    mode: "notes",
+    phase: input.status.phase,
+    summary: input.ship.summary,
+    validation: input.ship.releaseChecks,
+    followUp: [
+      input.status.nextAction ?? "No next action recorded.",
+      input.readiness.summary
+    ]
+  };
+}
+
 export function runStatus(status: StatusView): string {
   return formatStatusLine({
     phase: status.phase,
@@ -439,5 +464,17 @@ export function runTodayStatus(status: TodayStatusView): string {
     `Lane execution: ${status.activeLane.executionMode}`,
     `Readiness: ${status.readinessRecommendedCommand}`,
     `Ship: ${status.shipRecommendedCommand}`
+  ].join("\n");
+}
+
+export function runNotesStatus(status: NotesStatusView): string {
+  return [
+    "Notes",
+    `Phase: ${status.phase}`,
+    `Summary: ${status.summary}`,
+    "Validation:",
+    ...(status.validation.length > 0 ? status.validation.map(item => `- ${item}`) : ["- (none)"]),
+    "Follow-up:",
+    ...(status.followUp.length > 0 ? status.followUp.map(item => `- ${item}`) : ["- (none)"])
   ].join("\n");
 }

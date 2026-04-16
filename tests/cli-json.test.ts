@@ -193,6 +193,26 @@ test("status ship json returns release checklist and release note sections", asy
   }
 });
 
+test("status notes json returns a reusable release-note summary payload", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-status-notes-"));
+  try {
+    const output = await runCli(cwd, "status", "notes", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      summary: string;
+      validation: string[];
+      followUp: string[];
+    };
+
+    assert.equal(parsed.mode, "notes");
+    assert.ok(parsed.summary.length > 0);
+    assert.ok(parsed.validation.length > 0);
+    assert.ok(parsed.followUp.length > 0);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("status today json returns a single operator briefing payload", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-status-today-"));
   try {

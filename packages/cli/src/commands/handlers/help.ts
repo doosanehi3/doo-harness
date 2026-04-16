@@ -71,6 +71,7 @@ export function buildHelpPayload(context?: {
           "harness help [--json]",
           "harness auto [--json] [--steps N] [goal]",
           "harness status [--json]",
+          "harness status notes [--json]",
           "harness status today [--json]",
           "harness status ship [--json]",
           "harness status readiness [--json]",
@@ -89,6 +90,7 @@ export function buildHelpPayload(context?: {
         title: "Core Flow",
         commands: [
           "harness status [--json]",
+          "harness status notes [--json]",
           "harness status today [--json]",
           "harness status ship [--json]",
           "harness status readiness [--json]",
@@ -174,7 +176,7 @@ export function buildHelpPayload(context?: {
       },
       {
         title: "Compatibility",
-        commands: ["/status", "/status today", "/status ship", "/status readiness", "/status lanes", "/auto", "/plan", "/longrun", "/continue", "/provider-check", "/provider-smoke", "/provider-doctor", "/web-smoke", "/web-verify"]
+        commands: ["/status", "/status notes", "/status today", "/status ship", "/status readiness", "/status lanes", "/auto", "/plan", "/longrun", "/continue", "/provider-check", "/provider-smoke", "/provider-doctor", "/web-smoke", "/web-verify"]
       }
     ]
   };

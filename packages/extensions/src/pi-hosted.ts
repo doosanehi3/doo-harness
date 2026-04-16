@@ -42,6 +42,7 @@ import {
   buildCompactStatusView,
   buildDashboardStatusView,
   buildLaneStatusView,
+  buildNotesStatusView,
   buildReadinessStatusView,
   buildShipStatusView,
   buildTodayStatusView,
@@ -49,6 +50,7 @@ import {
   runCompactStatus,
   runDashboardStatus,
   runLaneStatus,
+  runNotesStatus,
   runReadinessStatus,
   runShipStatus,
   runTodayStatus,
@@ -95,6 +97,11 @@ async function executeHostedCommand(runtime: HarnessRuntime, cwd: string, input:
   );
   const readinessPayload = buildReadinessStatusView(runtimeStatus, doctorPayload);
   const shipPayload = buildShipStatusView(readinessPayload);
+  const notesPayload = buildNotesStatusView({
+    status: runtimeStatus,
+    readiness: readinessPayload,
+    ship: shipPayload
+  });
   const helpPayload = buildHelpPayload({
     phase: runtimeStatus.phase,
     goalSummary: runtimeStatus.goalSummary,
@@ -146,6 +153,12 @@ async function executeHostedCommand(runtime: HarnessRuntime, cwd: string, input:
       null,
       2
     );
+  }
+  if (trimmed === "/status-notes" || trimmed === "/status notes") {
+    return runNotesStatus(notesPayload);
+  }
+  if (trimmed === "/status-notes-json" || trimmed === "/status notes --json") {
+    return JSON.stringify(notesPayload, null, 2);
   }
   if (trimmed === "/status-readiness" || trimmed === "/status readiness") {
     return runReadinessStatus(readinessPayload);
