@@ -17,6 +17,12 @@ export function runTimeline(payload: TimelinePayload): string {
     payload.summary,
     `Phase: ${payload.phase}`,
     `Active task: ${payload.activeTaskId ?? "-"}${payload.activeTaskText ? ` ${payload.activeTaskText}` : ""}`,
+    `Recovery latest failure: ${payload.recovery.latestFailurePath ?? "-"}`,
+    `Recovery latest pass: ${payload.recovery.latestPassPath ?? "-"}`,
+    `Recovery latest handoff: ${payload.recovery.latestHandoffPath ?? "-"}`,
+    `Recovery blocker: ${payload.recovery.blocker ?? "-"}`,
+    `Recovery hint: ${payload.recovery.recoveryHint ?? "-"}`,
+    `Recovery next: ${payload.recovery.recommendation ?? "-"}`,
     ...payload.items.flatMap(item => [
       `- ${item.timestamp} ${item.kind} ${item.label}`,
       `  ${item.detail}${item.path ? ` :: ${item.path}` : ""}`

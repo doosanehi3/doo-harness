@@ -11,6 +11,7 @@ export interface ToolReadiness {
   installed: boolean;
   required: boolean;
   purpose: string;
+  installCommand: string;
 }
 
 export interface DoctorPayload {
@@ -18,6 +19,7 @@ export interface DoctorPayload {
   cwd: string;
   configPath: string;
   hasRuntimeConfig: boolean;
+  ready: boolean;
   tools: ToolReadiness[];
   providerReadiness: Array<{
     role: string;
@@ -26,6 +28,13 @@ export interface DoctorPayload {
     suggestedAction: string;
   }>;
   nextSteps: string[];
+  firstRunCommands: string[];
+  validationTracks: Array<{
+    kind: "local" | "interactive" | "release";
+    summary: string;
+    commands: string[];
+  }>;
+  recommendedCommand: string;
   summary: string;
 }
 
@@ -40,6 +49,9 @@ export interface BootstrapPreset {
 export interface BootstrapPayload {
   mode: "bootstrap";
   selectedPreset: string | null;
+  recommendedPreset: string;
+  recommendedReason: string;
+  nextCommands: string[];
   presets: BootstrapPreset[];
   summary: string;
 }
@@ -68,25 +80,29 @@ export async function buildDoctorPayload(
       name: "node",
       installed: await hasCommand("node"),
       required: true,
-      purpose: "Run the harness CLI and workspace scripts"
+      purpose: "Run the harness CLI and workspace scripts",
+      installCommand: "Install Node.js 20+ and ensure `node` is on PATH."
     },
     {
       name: "pnpm",
       installed: await hasCommand("pnpm"),
       required: true,
-      purpose: "Install dependencies and run check/test/smoke scripts"
+      purpose: "Install dependencies and run check/test/smoke scripts",
+      installCommand: "Run `corepack enable && corepack prepare pnpm@latest --activate`."
     },
     {
       name: "rg",
       installed: await hasCommand("rg"),
       required: true,
-      purpose: "Power review/search and artifact retrieval commands"
+      purpose: "Power review/search and artifact retrieval commands",
+      installCommand: "Install ripgrep and ensure `rg` is on PATH."
     },
     {
       name: "pi",
       installed: await hasCommand("pi"),
       required: false,
-      purpose: "Run interactive pi-hosted extension workflows"
+      purpose: "Run interactive pi-hosted extension workflows",
+      installCommand: "Install the pi CLI if interactive pi extension workflows are needed."
     }
   ];
 
@@ -109,8 +125,40 @@ export async function buildDoctorPayload(
   }
 
   nextSteps.push("Run `harness bootstrap` to choose the best starting preset for the repo shape.");
+  const firstRunCommands = [
+    existsSync(configPath) ? null : "harness config init openai-codex",
+    missingProvider ? null : "harness provider doctor",
+    "harness bootstrap",
+    "harness auto <goal>"
+  ].filter((item): item is string => Boolean(item));
+  const validationTracks: DoctorPayload["validationTracks"] = [
+    {
+      kind: "local",
+      summary: "Fast local validation for repo/runtime/provider correctness",
+      commands: ["harness provider doctor", "harness web smoke --json", "harness web verify --json"]
+    },
+    {
+      kind: "interactive",
+      summary: "Interactive pi-hosted validation for extension rendering and command flow",
+      commands: ["pnpm run smoke:pi:ui", "pnpm run smoke:pi:interactive"]
+    },
+    {
+      kind: "release",
+      summary: "Release-gate package and extension validation",
+      commands: ["pnpm run smoke:pi:print", "pnpm run smoke:pi:install", "pnpm run smoke:pi:interactive"]
+    }
+  ];
 
   const missingRequired = tools.filter(tool => tool.required && !tool.installed).length;
+  const ready = missingRequired === 0 && existsSync(configPath) && !missingProvider;
+  const recommendedCommand =
+    missingRequired > 0
+      ? "Resolve the missing required tools first."
+      : !existsSync(configPath)
+        ? "harness config init openai-codex"
+        : missingProvider
+          ? "harness provider doctor"
+          : "harness bootstrap";
   const summary =
     missingRequired > 0
       ? `${missingRequired} required tool(s) missing.`
@@ -123,6 +171,7 @@ export async function buildDoctorPayload(
     cwd,
     configPath,
     hasRuntimeConfig: existsSync(configPath),
+    ready,
     tools,
     providerReadiness: providerReadiness.map(item => ({
       role: item.role,
@@ -131,6 +180,9 @@ export async function buildDoctorPayload(
       suggestedAction: item.suggestedAction
     })),
     nextSteps,
+    firstRunCommands,
+    validationTracks,
+    recommendedCommand,
     summary
   };
 }
@@ -141,10 +193,18 @@ export function runDoctor(payload: DoctorPayload): string {
     `Config: ${payload.hasRuntimeConfig ? payload.configPath : "(missing)"}`,
     "Tools:",
     ...payload.tools.map(
-      tool => `- ${tool.name}: ${tool.installed ? "ready" : "missing"}${tool.required ? " (required)" : " (optional)"}`
+      tool =>
+        `- ${tool.name}: ${tool.installed ? "ready" : "missing"}${tool.required ? " (required)" : " (optional)"}${
+          tool.installed ? "" : ` :: ${tool.installCommand}`
+        }`
     ),
     "Provider readiness:",
     ...payload.providerReadiness.map(item => `- ${item.role}: ${item.status} via ${item.provider}`),
+    `Recommended: ${payload.recommendedCommand}`,
+    "First-run commands:",
+    ...payload.firstRunCommands.map(command => `- ${command}`),
+    "Validation tracks:",
+    ...payload.validationTracks.flatMap(track => [`- ${track.kind}: ${track.summary}`, ...track.commands.map(command => `  - ${command}`)]),
     "Next steps:",
     ...payload.nextSteps.map(step => `- ${step}`)
   ].join("\n");
@@ -195,20 +255,75 @@ export function formatInvalidBootstrapPreset(raw: string): string {
   return `Unknown bootstrap preset: ${raw}. Allowed: ${BOOTSTRAP_PRESETS.map(item => item.id).join(", ")}`;
 }
 
-export function buildBootstrapPayload(selectedPreset: string | null = null): BootstrapPayload {
+function inferBootstrapPreset(cwd: string): { id: string; reason: string } {
+  if (
+    existsSync(join(cwd, "next.config.js")) ||
+    existsSync(join(cwd, "next.config.mjs")) ||
+    existsSync(join(cwd, "next.config.ts")) ||
+    existsSync(join(cwd, "app")) ||
+    existsSync(join(cwd, "pages"))
+  ) {
+    return {
+      id: "nextjs-catalog",
+      reason: "Next.js-style files are present in the repo."
+    };
+  }
+
+  if (
+    existsSync(join(cwd, "vite.config.js")) ||
+    existsSync(join(cwd, "vite.config.ts")) ||
+    existsSync(join(cwd, "vite.config.mjs"))
+  ) {
+    return {
+      id: "react-vite-catalog",
+      reason: "Vite config is present, so the React/Vite preset is the closest fit."
+    };
+  }
+
+  if (existsSync(join(cwd, "package.json"))) {
+    return {
+      id: "node-cli",
+      reason: "A package.json exists but no stronger web-framework signal is present."
+    };
+  }
+
+  return {
+    id: "catalog-webapp",
+    reason: "No repo-shape signal is present yet, so the generic browser-first preset is the safest default."
+  };
+}
+
+export function buildBootstrapPayload(selectedPreset: string | null = null, cwd: string = process.cwd()): BootstrapPayload {
   const presets = BOOTSTRAP_PRESETS;
+  const inferred = inferBootstrapPreset(cwd);
+  const effectivePreset = selectedPreset ?? inferred.id;
+  const effectivePresetMeta = presets.find(preset => preset.id === effectivePreset) ?? presets[0]!;
+  const nextCommands = [
+    effectivePresetMeta.kickoff,
+    "harness status dashboard --json",
+    "harness auto <goal>"
+  ];
 
   return {
     mode: "bootstrap",
     selectedPreset,
+    recommendedPreset: inferred.id,
+    recommendedReason: inferred.reason,
+    nextCommands,
     presets: selectedPreset ? presets.filter(preset => preset.id === selectedPreset) : presets,
-    summary: selectedPreset ? `Bootstrap preset: ${selectedPreset}` : `${presets.length} bootstrap presets available.`
+    summary: selectedPreset
+      ? `Bootstrap preset: ${selectedPreset}`
+      : `${presets.length} bootstrap presets available. Recommended: ${inferred.id}.`
   };
 }
 
 export function runBootstrap(payload: BootstrapPayload): string {
   return [
     payload.summary,
+    `Recommended preset: ${payload.recommendedPreset}`,
+    `Reason: ${payload.recommendedReason}`,
+    "Next commands:",
+    ...payload.nextCommands.map(command => `- ${command}`),
     ...payload.presets.flatMap(preset => [
       `${preset.id}: ${preset.label}`,
       `  when=${preset.whenToUse}`,

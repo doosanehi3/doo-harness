@@ -20,10 +20,13 @@ test("pi-hosted bridge returns machine-readable help payload", async () => {
     const output = await bridge.execute("/help-json");
     const parsed = JSON.parse(output) as {
       overview: string;
+      contextual: { focus: string; commands: string[] };
       commandGroups: Array<{ title: string; commands: string[] }>;
     };
 
     assert.match(parsed.overview, /pi-ready runtime-core product/i);
+    assert.ok(parsed.contextual.focus.length > 0);
+    assert.ok(parsed.contextual.commands.length > 0);
     assert.ok(parsed.commandGroups.some(group => group.title === "Operator Loop"));
   } finally {
     await rm(cwd, { recursive: true, force: true });
@@ -38,17 +41,30 @@ test("pi-hosted bridge exposes doctor and bootstrap onboarding surfaces", async 
     const doctorOutput = await bridge.execute("doctor --json");
     const doctor = JSON.parse(doctorOutput) as {
       mode: string;
-      tools: Array<{ name: string }>;
+      tools: Array<{ name: string; installCommand: string }>;
+      recommendedCommand: string;
+      firstRunCommands: string[];
+      validationTracks: Array<{ kind: string; commands: string[] }>;
     };
     assert.equal(doctor.mode, "doctor");
     assert.ok(doctor.tools.some(item => item.name === "node"));
+    assert.ok(doctor.tools.every(item => item.installCommand.length > 0));
+    assert.ok(doctor.recommendedCommand.length > 0);
+    assert.ok(doctor.firstRunCommands.length > 0);
+    assert.ok(doctor.validationTracks.some(track => track.kind === "local"));
+    assert.ok(doctor.validationTracks.some(track => track.kind === "interactive"));
+    assert.ok(doctor.validationTracks.some(track => track.kind === "release"));
 
     const bootstrapOutput = await bridge.execute("bootstrap --json");
     const bootstrap = JSON.parse(bootstrapOutput) as {
       mode: string;
+      recommendedPreset: string;
+      nextCommands: string[];
       presets: Array<{ id: string }>;
     };
     assert.equal(bootstrap.mode, "bootstrap");
+    assert.ok(bootstrap.recommendedPreset.length > 0);
+    assert.ok(bootstrap.nextCommands.length > 0);
     assert.ok(bootstrap.presets.some(item => item.id === "node-cli"));
 
     const invalidBootstrapOutput = await bridge.execute("bootstrap nope --json");
@@ -81,6 +97,135 @@ test("pi-hosted bridge can plan and expose runtime status", async () => {
 
     assert.deepEqual(status.allowedTools, ["read"]);
     assert.equal(status.handoffEligible, true);
+
+    const lanesOutput = await bridge.execute("status lanes --json");
+    const lanes = JSON.parse(lanesOutput) as {
+      mode: string;
+      active: { taskId: string | null; owner: string | null };
+      ready: Array<{ taskId: string }>;
+    };
+    assert.equal(lanes.mode, "lanes");
+    assert.equal(lanes.active.taskId, "T1");
+    assert.equal(lanes.active.owner, "planner");
+    assert.ok(lanes.ready.length > 0);
+
+    const readinessOutput = await bridge.execute("status readiness --json");
+    const readiness = JSON.parse(readinessOutput) as {
+      mode: string;
+      recommendedCommand: string;
+      validationTracks: Array<{ kind: string }>;
+    };
+    assert.equal(readiness.mode, "readiness");
+    assert.ok(readiness.recommendedCommand.length > 0);
+    assert.ok(readiness.validationTracks.some(track => track.kind === "release"));
+
+    const shipOutput = await bridge.execute("status ship --json");
+    const ship = JSON.parse(shipOutput) as {
+      mode: string;
+      recommendedCommand: string;
+      releaseChecks: string[];
+    };
+    assert.equal(ship.mode, "ship");
+    assert.ok(ship.recommendedCommand.length > 0);
+    assert.ok(ship.releaseChecks.length > 0);
+
+    const todayOutput = await bridge.execute("status today --json");
+    const today = JSON.parse(todayOutput) as {
+      mode: string;
+      activeLane: { taskId: string | null };
+      readinessRecommendedCommand: string;
+      shipRecommendedCommand: string;
+    };
+    assert.equal(today.mode, "today");
+    assert.equal(today.activeLane.taskId, "T1");
+    assert.ok(today.readinessRecommendedCommand.length > 0);
+    assert.ok(today.shipRecommendedCommand.length > 0);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("pi-hosted bridge exposes autonomous auto entrypoint", async () => {
+  const cwd = await createTempHarnessDir();
+  try {
+    const bridge = createPiHostedHarnessBridge({ cwd });
+
+    const output = await bridge.execute("auto --json --steps 0 Hosted auto demo");
+    const parsed = JSON.parse(output) as {
+      mode: string;
+      entry: string;
+      startedNewPlan: boolean;
+      specPath: string | null;
+      stopReason: string;
+    };
+
+    assert.equal(parsed.mode, "auto");
+    assert.equal(parsed.entry, "planned");
+    assert.equal(parsed.startedNewPlan, true);
+    assert.match(parsed.specPath ?? "", /spec\.md$/);
+    assert.equal(parsed.stopReason, "max_steps");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("pi-hosted bridge exposes handoff inspect and cleanup entrypoints", async () => {
+  const cwd = await createTempHarnessDir();
+  try {
+    const bridge = createPiHostedHarnessBridge({ cwd });
+    const runtime = await bridge.getRuntime();
+    await runtime.plan("Hosted handoff inspect demo", true);
+    const handoffPath = await runtime.createHandoff();
+
+    const inspectOutput = await bridge.execute("handoff inspect --json");
+    const inspect = JSON.parse(inspectOutput) as {
+      mode: string;
+      path: string | null;
+      preview: string[];
+    };
+    assert.equal(inspect.mode, "handoff-inspect");
+    assert.equal(inspect.path, handoffPath);
+    assert.ok(inspect.preview.length > 0);
+
+    await runtime.reset();
+    const cleanupOutput = await bridge.execute("handoff cleanup --json");
+    const cleanup = JSON.parse(cleanupOutput) as {
+      mode: string;
+      cleared: boolean;
+      status: { lastHandoffPath: string | null };
+    };
+    assert.equal(cleanup.mode, "handoff-cleanup");
+    assert.equal(cleanup.cleared, true);
+    assert.equal(cleanup.status.lastHandoffPath, null);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("pi-hosted bridge keeps preserved handoff when cleanup is attempted during active runtime", async () => {
+  const cwd = await createTempHarnessDir();
+  try {
+    const bridge = createPiHostedHarnessBridge({ cwd });
+    const runtime = await bridge.getRuntime();
+    await runtime.plan("Hosted handoff cleanup active demo", true);
+    const handoffPath = await runtime.createHandoff();
+
+    const cleanupOutput = await bridge.execute("handoff cleanup --json");
+    const cleanup = JSON.parse(cleanupOutput) as {
+      mode: string;
+      cleared: boolean;
+      previousPath: string | null;
+      remainingPath: string | null;
+      reason: string;
+      status: { lastHandoffPath: string | null; phase: string };
+    };
+    assert.equal(cleanup.mode, "handoff-cleanup");
+    assert.equal(cleanup.cleared, false);
+    assert.equal(cleanup.previousPath, handoffPath);
+    assert.equal(cleanup.remainingPath, handoffPath);
+    assert.match(cleanup.reason, /inactive/i);
+    assert.equal(cleanup.status.lastHandoffPath, handoffPath);
+    assert.equal(cleanup.status.phase, "planning");
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -120,6 +265,16 @@ test("pi-hosted bridge exposes review and search surfaces", async () => {
 
     assert.equal(search.mode, "recent");
     assert.ok(search.matches.some(line => line.includes("/reviews/")));
+
+    const activeTaskOutput = await bridge.execute("recent active-task --json");
+    const activeTask = JSON.parse(activeTaskOutput) as {
+      mode: string;
+      query: string;
+      matches: string[];
+    };
+    assert.equal(activeTask.mode, "recent");
+    assert.equal(activeTask.query, "active-task");
+    assert.ok(activeTask.matches.length > 0);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -152,6 +307,16 @@ test("pi-hosted bridge exposes review history and review artifact surfaces", asy
     assert.equal(artifact.mode, "artifact");
     assert.equal(artifact.target, "artifact:verification");
     assert.ok(artifact.preview.length > 0);
+
+    const compareOutput = await bridge.execute("review compare --json");
+    const compare = JSON.parse(compareOutput) as {
+      mode: string;
+      comparedRefs: string[];
+      synthesis: string[];
+    };
+    assert.equal(compare.mode, "compare");
+    assert.ok(compare.comparedRefs.length >= 2);
+    assert.ok(compare.synthesis.some(line => line.startsWith("Compared refs:")));
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -222,11 +387,15 @@ test("pi-hosted bridge exposes dashboard status", async () => {
       mode: string;
       blocked: { items: unknown[] };
       pickup: { pickupKind: string };
+      handoff: { eligible: boolean };
+      auto: { recommendedCommand: string };
     };
 
     assert.equal(parsed.mode, "dashboard");
     assert.ok(parsed.blocked.items.length > 0);
     assert.equal(parsed.pickup.pickupKind, "blocked");
+    assert.equal(typeof parsed.handoff.eligible, "boolean");
+    assert.ok(parsed.auto.recommendedCommand.length > 0);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -273,22 +442,31 @@ test("pi-hosted bridge exposes blocked, queue, and pickup entrypoints", async ()
     const queueOutput = await bridge.execute("queue review --json");
     const queue = JSON.parse(queueOutput) as {
       mode: string;
-      items: Array<{ label: string; priority: string; rationale: string }>;
+      items: Array<{ label: string; priority: string; rationale: string; score: number; recommendedCommand: string }>;
     };
     assert.equal(queue.mode, "queue");
     assert.ok(queue.items.length > 0);
     assert.ok(queue.items[0]?.priority);
     assert.ok(queue.items[0]?.rationale);
+    assert.equal(typeof queue.items[0]?.score, "number");
+    assert.ok(queue.items[0]?.recommendedCommand.length > 0);
 
     const pickupOutput = await bridge.execute("pickup --json");
     const pickup = JSON.parse(pickupOutput) as {
       mode: string;
       pickupKind: string;
       rationale: string;
+      recommendedCommand: string;
+      alternatives: string[];
+      urgency: string;
     };
     assert.equal(pickup.mode, "pickup");
     assert.ok(["active-task", "blocked", "ready-task", "waiting", "idle"].includes(pickup.pickupKind));
     assert.ok(pickup.rationale.length > 0);
+    assert.ok(pickup.recommendedCommand.length > 0);
+    assert.ok(pickup.alternatives.length > 0);
+    assert.ok(["high", "medium", "low"].includes(pickup.urgency));
+    assert.ok(pickup.alternatives.some(item => item.includes("harness")));
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -317,9 +495,23 @@ test("pi-hosted bridge exposes related artifacts and timeline entrypoints", asyn
     const timeline = JSON.parse(timelineOutput) as {
       mode: string;
       items: Array<{ kind: string }>;
+      recovery: { recommendation: string | null; blocker: string | null; recoveryHint: string | null };
     };
     assert.equal(timeline.mode, "timeline");
     assert.ok(timeline.items.some(item => item.kind === "runtime"));
+    assert.ok(typeof timeline.recovery.recommendation === "string" || timeline.recovery.recommendation === null);
+    assert.ok("blocker" in timeline.recovery);
+    assert.ok("recoveryHint" in timeline.recovery);
+
+    const inspectOutput = await bridge.execute("artifacts inspect --json");
+    const inspect = JSON.parse(inspectOutput) as {
+      mode: string;
+      artifact: { path: string; type: string };
+      preview: string[];
+    };
+    assert.equal(inspect.mode, "artifact-inspect");
+    assert.ok(inspect.artifact.path.length > 0);
+    assert.ok(inspect.preview.length > 0);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

@@ -58,6 +58,7 @@ test("pi extension command executes hosted bridge and reports output", async () 
 
     assert.ok(notifications.some(message => /Harness help ready/i.test(message)));
     assert.ok(widgetUpdates.some(lines => lines[0] === "Harness"));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Focus:"))));
     assert.equal(appended.length, 1);
   } finally {
     await rm(cwd, { recursive: true, force: true });
@@ -93,6 +94,161 @@ test("pi extension formats doctor results into widget and notification output", 
 
     assert.ok(notifications.some(message => /Harness doctor:/i.test(message)));
     assert.ok(widgetUpdates.some(lines => lines[0] === "Harness Doctor"));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Recommended:"))));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Track:"))));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("pi extension formats bootstrap results into widget and notification output", async () => {
+  const cwd = await createTempHarnessDir();
+  const notifications: string[] = [];
+  const widgetUpdates: string[][] = [];
+  let handler: ((args: string, ctx: any) => Promise<void> | void) | null = null;
+
+  try {
+    harnessPiExtension({
+      registerCommand(_name, options) {
+        handler = options.handler;
+      }
+    });
+
+    assert.ok(handler);
+    await handler!("bootstrap --json", {
+      cwd,
+      hasUI: true,
+      ui: {
+        notify(message: string) {
+          notifications.push(message);
+        },
+        setWidget(_key: string, content: string[] | undefined) {
+          widgetUpdates.push(content ?? []);
+        }
+      }
+    });
+
+    assert.ok(notifications.some(message => /Harness bootstrap:/i.test(message)));
+    assert.ok(widgetUpdates.some(lines => lines[0] === "Harness Bootstrap"));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Recommended:"))));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("pi extension formats auto results into widget and notification output", async () => {
+  const cwd = await createTempHarnessDir();
+  const notifications: string[] = [];
+  const widgetUpdates: string[][] = [];
+  let handler: ((args: string, ctx: any) => Promise<void> | void) | null = null;
+
+  try {
+    harnessPiExtension({
+      registerCommand(_name, options) {
+        handler = options.handler;
+      }
+    });
+
+    assert.ok(handler);
+    await handler!("auto --json --steps 0 Pi auto demo", {
+      cwd,
+      hasUI: true,
+      ui: {
+        notify(message: string) {
+          notifications.push(message);
+        },
+        setWidget(_key: string, content: string[] | undefined) {
+          widgetUpdates.push(content ?? []);
+        }
+      }
+    });
+
+    assert.ok(notifications.some(message => /Harness auto:/i.test(message)));
+    assert.ok(widgetUpdates.some(lines => lines[0] === "Harness Auto"));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Stop:"))));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Summary:"))));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("pi extension formats handoff inspect results into widget and notification output", async () => {
+  const cwd = await createTempHarnessDir();
+  const notifications: string[] = [];
+  const widgetUpdates: string[][] = [];
+  let handler: ((args: string, ctx: any) => Promise<void> | void) | null = null;
+
+  try {
+    const bridge = createPiHostedHarnessBridge({ cwd });
+    const runtime = await bridge.getRuntime();
+    await runtime.plan("Pi handoff inspect demo", true);
+    await runtime.createHandoff();
+
+    harnessPiExtension({
+      registerCommand(_name, options) {
+        handler = options.handler;
+      }
+    });
+
+    assert.ok(handler);
+    await handler!("handoff inspect --json", {
+      cwd,
+      hasUI: true,
+      ui: {
+        notify(message: string) {
+          notifications.push(message);
+        },
+        setWidget(_key: string, content: string[] | undefined) {
+          widgetUpdates.push(content ?? []);
+        }
+      }
+    });
+
+    assert.ok(notifications.some(message => /Harness handoff inspect ready/i.test(message)));
+    assert.ok(widgetUpdates.some(lines => lines[0] === "Harness Handoff"));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Cleanup:"))));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("pi extension formats handoff cleanup results into widget and notification output", async () => {
+  const cwd = await createTempHarnessDir();
+  const notifications: string[] = [];
+  const widgetUpdates: string[][] = [];
+  let handler: ((args: string, ctx: any) => Promise<void> | void) | null = null;
+
+  try {
+    const bridge = createPiHostedHarnessBridge({ cwd });
+    const runtime = await bridge.getRuntime();
+    await runtime.plan("Pi handoff cleanup demo", true);
+    await runtime.createHandoff();
+    await runtime.reset();
+
+    harnessPiExtension({
+      registerCommand(_name, options) {
+        handler = options.handler;
+      }
+    });
+
+    assert.ok(handler);
+    await handler!("handoff cleanup --json", {
+      cwd,
+      hasUI: true,
+      ui: {
+        notify(message: string) {
+          notifications.push(message);
+        },
+        setWidget(_key: string, content: string[] | undefined) {
+          widgetUpdates.push(content ?? []);
+        }
+      }
+    });
+
+    assert.ok(notifications.some(message => /Harness handoff cleanup: cleared/i.test(message)));
+    assert.ok(widgetUpdates.some(lines => lines[0] === "Harness Handoff Cleanup"));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Cleared:"))));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Reason:"))));
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -172,6 +328,49 @@ test("pi extension formats review artifact into widget and notification output",
   }
 });
 
+test("pi extension formats review compare into widget and notification output", async () => {
+  const cwd = await createTempHarnessDir();
+  const notifications: string[] = [];
+  const widgetUpdates: string[][] = [];
+  let handler: ((args: string, ctx: any) => Promise<void> | void) | null = null;
+
+  try {
+    const bridge = createPiHostedHarnessBridge({ cwd });
+    const runtime = await bridge.getRuntime();
+    await runtime.plan("Pi extension compare review demo", true);
+    await runtime.executeCurrentTask();
+    await runtime.verify();
+    await runtime.review();
+
+    harnessPiExtension({
+      registerCommand(_name, options) {
+        handler = options.handler;
+      }
+    });
+
+    assert.ok(handler);
+    await handler!("review compare --json", {
+      cwd,
+      hasUI: true,
+      ui: {
+        notify(message: string) {
+          notifications.push(message);
+        },
+        setWidget(_key: string, content: string[] | undefined) {
+          widgetUpdates.push(content ?? []);
+        }
+      }
+    });
+
+    assert.ok(notifications.some(message => /Harness review compare ready|Harness review/i.test(message)));
+    assert.ok(widgetUpdates.some(lines => lines[0] === "Harness Review (compare)"));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Compared:"))));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Synthesis:"))));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("pi extension formats search results into widget and notification output", async () => {
   const cwd = await createTempHarnessDir();
   const notifications: string[] = [];
@@ -243,6 +442,151 @@ test("pi extension formats compact status into a tighter widget summary", async 
   }
 });
 
+test("pi extension formats lane status into widget and notification output", async () => {
+  const cwd = await createTempHarnessDir();
+  const notifications: string[] = [];
+  const widgetUpdates: string[][] = [];
+  let handler: ((args: string, ctx: any) => Promise<void> | void) | null = null;
+
+  try {
+    harnessPiExtension({
+      registerCommand(_name, options) {
+        handler = options.handler;
+      }
+    });
+
+    assert.ok(handler);
+    await handler!("status lanes --json", {
+      cwd,
+      hasUI: true,
+      ui: {
+        notify(message: string) {
+          notifications.push(message);
+        },
+        setWidget(_key: string, content: string[] | undefined) {
+          widgetUpdates.push(content ?? []);
+        }
+      }
+    });
+
+    assert.ok(notifications.some(message => /Harness lanes ready/i.test(message)));
+    assert.ok(widgetUpdates.some(lines => lines[0] === "Harness Lanes"));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Owner:"))));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Execution:"))));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("pi extension formats readiness status into widget and notification output", async () => {
+  const cwd = await createTempHarnessDir();
+  const notifications: string[] = [];
+  const widgetUpdates: string[][] = [];
+  let handler: ((args: string, ctx: any) => Promise<void> | void) | null = null;
+
+  try {
+    harnessPiExtension({
+      registerCommand(_name, options) {
+        handler = options.handler;
+      }
+    });
+
+    assert.ok(handler);
+    await handler!("status readiness --json", {
+      cwd,
+      hasUI: true,
+      ui: {
+        notify(message: string) {
+          notifications.push(message);
+        },
+        setWidget(_key: string, content: string[] | undefined) {
+          widgetUpdates.push(content ?? []);
+        }
+      }
+    });
+
+    assert.ok(notifications.some(message => /Harness readiness ready/i.test(message)));
+    assert.ok(widgetUpdates.some(lines => lines[0] === "Harness Readiness"));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Recommended:"))));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Summary:"))));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("pi extension formats ship status into widget and notification output", async () => {
+  const cwd = await createTempHarnessDir();
+  const notifications: string[] = [];
+  const widgetUpdates: string[][] = [];
+  let handler: ((args: string, ctx: any) => Promise<void> | void) | null = null;
+
+  try {
+    harnessPiExtension({
+      registerCommand(_name, options) {
+        handler = options.handler;
+      }
+    });
+
+    assert.ok(handler);
+    await handler!("status ship --json", {
+      cwd,
+      hasUI: true,
+      ui: {
+        notify(message: string) {
+          notifications.push(message);
+        },
+        setWidget(_key: string, content: string[] | undefined) {
+          widgetUpdates.push(content ?? []);
+        }
+      }
+    });
+
+    assert.ok(notifications.some(message => /Harness ship ready/i.test(message)));
+    assert.ok(widgetUpdates.some(lines => lines[0] === "Harness Ship"));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Recommended:"))));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Summary:"))));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("pi extension formats today status into widget and notification output", async () => {
+  const cwd = await createTempHarnessDir();
+  const notifications: string[] = [];
+  const widgetUpdates: string[][] = [];
+  let handler: ((args: string, ctx: any) => Promise<void> | void) | null = null;
+
+  try {
+    harnessPiExtension({
+      registerCommand(_name, options) {
+        handler = options.handler;
+      }
+    });
+
+    assert.ok(handler);
+    await handler!("status today --json", {
+      cwd,
+      hasUI: true,
+      ui: {
+        notify(message: string) {
+          notifications.push(message);
+        },
+        setWidget(_key: string, content: string[] | undefined) {
+          widgetUpdates.push(content ?? []);
+        }
+      }
+    });
+
+    assert.ok(notifications.some(message => /Harness today ready/i.test(message)));
+    assert.ok(widgetUpdates.some(lines => lines[0] === "Harness Today"));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Summary:"))));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Readiness:"))));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Ship:"))));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("pi extension formats dashboard status into widget and notification output", async () => {
   const cwd = await createTempHarnessDir();
   const notifications: string[] = [];
@@ -272,6 +616,8 @@ test("pi extension formats dashboard status into widget and notification output"
 
     assert.ok(notifications.some(message => /Harness dashboard ready/i.test(message)));
     assert.ok(widgetUpdates.some(lines => lines[0] === "Harness Dashboard"));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Handoff:"))));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Auto:"))));
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -307,6 +653,9 @@ test("pi extension formats pickup entrypoint results into widget and notificatio
     assert.ok(notifications.some(message => /Harness pickup:/i.test(message)));
     assert.ok(widgetUpdates.some(lines => lines[0] === "Harness Pickup"));
     assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Why:"))));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Urgency:"))));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Run:"))));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Alternatives:"))));
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -341,6 +690,50 @@ test("pi extension formats timeline entrypoint results into widget and notificat
 
     assert.ok(notifications.some(message => /Harness timeline:/i.test(message)));
     assert.ok(widgetUpdates.some(lines => lines[0] === "Harness Timeline"));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Recovery:"))));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Blocker:"))));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Hint:"))));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("pi extension formats artifact inspect results into widget and notification output", async () => {
+  const cwd = await createTempHarnessDir();
+  const notifications: string[] = [];
+  const widgetUpdates: string[][] = [];
+  let handler: ((args: string, ctx: any) => Promise<void> | void) | null = null;
+
+  try {
+    const bridge = createPiHostedHarnessBridge({ cwd });
+    const runtime = await bridge.getRuntime();
+    await runtime.plan("Pi artifact inspect demo", true);
+    await runtime.executeCurrentTask();
+    await runtime.verify();
+
+    harnessPiExtension({
+      registerCommand(_name, options) {
+        handler = options.handler;
+      }
+    });
+
+    assert.ok(handler);
+    await handler!("artifacts inspect --json", {
+      cwd,
+      hasUI: true,
+      ui: {
+        notify(message: string) {
+          notifications.push(message);
+        },
+        setWidget(_key: string, content: string[] | undefined) {
+          widgetUpdates.push(content ?? []);
+        }
+      }
+    });
+
+    assert.ok(notifications.some(message => /Harness artifact inspect ready/i.test(message)));
+    assert.ok(widgetUpdates.some(lines => lines[0] === "Harness Artifact"));
+    assert.ok(widgetUpdates.some(lines => lines.some(line => line.startsWith("Resolved:"))));
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

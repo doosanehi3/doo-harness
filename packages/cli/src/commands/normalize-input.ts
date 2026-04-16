@@ -16,9 +16,23 @@ export function normalizeCommandTokens(tokens: string[]): string {
   switch (command) {
     case "help":
       return json ? "/help-json" : "/help";
+    case "auto":
+      return json ? join("/auto-json", payload) : join("/auto", payload);
     case "doctor":
       return json ? "/doctor-json" : "/doctor";
     case "status":
+      if (payload[0] === "today") {
+        return json ? "/status-today-json" : "/status-today";
+      }
+      if (payload[0] === "ship") {
+        return json ? "/status-ship-json" : "/status-ship";
+      }
+      if (payload[0] === "readiness") {
+        return json ? "/status-readiness-json" : "/status-readiness";
+      }
+      if (payload[0] === "lanes") {
+        return json ? "/status-lanes-json" : "/status-lanes";
+      }
       if (payload[0] === "compact") {
         return json ? "/status-compact-json" : "/status-compact";
       }
@@ -27,6 +41,9 @@ export function normalizeCommandTokens(tokens: string[]): string {
       }
       return json ? "/status-json" : "/status";
     case "artifacts":
+      if (payload[0] === "inspect") {
+        return json ? join("/artifacts-inspect-json", payload.slice(1)) : join("/artifacts-inspect", payload.slice(1));
+      }
       if (payload[0] === "related") {
         return json ? join("/artifacts-related-json", payload.slice(1)) : join("/artifacts-related", payload.slice(1));
       }
@@ -54,6 +71,12 @@ export function normalizeCommandTokens(tokens: string[]): string {
     case "review":
       return json ? join("/review-json", payload) : join("/review", payload);
     case "handoff":
+      if (payload[0] === "inspect") {
+        return json ? "/handoff-inspect-json" : "/handoff-inspect";
+      }
+      if (payload[0] === "cleanup") {
+        return json ? "/handoff-cleanup-json" : "/handoff-cleanup";
+      }
       return json ? "/handoff-json" : "/handoff";
     case "advance":
       return json ? "/advance-json" : "/advance";

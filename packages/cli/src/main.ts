@@ -1,16 +1,25 @@
 import { createProcessPiSubstrateAdapter } from "../../ai/src/index.js";
 import { HarnessRuntime, writeDefaultRuntimeConfig } from "../../harness-runtime/src/index.js";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { formatInvalidArtifactFilter, parseArtifactFilter, runArtifacts } from "./commands/handlers/artifacts.js";
+import { buildArtifactInspectPayload, formatInvalidArtifactFilter, parseArtifactFilter, runArtifactInspect, runArtifacts } from "./commands/handlers/artifacts.js";
 import { runRelatedArtifacts, runTimeline } from "./commands/handlers/artifact-browser.js";
 import { runAdvance } from "./commands/handlers/advance.js";
-import { runAuto } from "./commands/handlers/auto.js";
+import { normalizeAutoInput, parseAutoArgs, runAuto } from "./commands/handlers/auto.js";
 import { runBlock } from "./commands/handlers/block.js";
 import { runContinue } from "./commands/handlers/continue.js";
 import { runConfigInit, runConfigShow } from "./commands/handlers/config-init.js";
 import { runExecute } from "./commands/handlers/execute.js";
 import { runBlocked, runPickup, runQueue } from "./commands/handlers/entrypoints.js";
-import { runHandoff } from "./commands/handlers/handoff.js";
+import {
+  buildHandoffCleanupPayload,
+  buildHandoffInspectPayload,
+  buildHandoffPreview,
+  runHandoff,
+  runHandoffCleanup,
+  runHandoffInspect
+} from "./commands/handlers/handoff.js";
 import { buildHelpPayload, runHelp } from "./commands/handlers/help.js";
 import { runLongRun } from "./commands/handlers/longrun.js";
 import { runLoop } from "./commands/handlers/loop.js";
@@ -18,13 +27,35 @@ import { runPlan } from "./commands/handlers/plan.js";
 import { runProviderCheck } from "./commands/handlers/provider-check.js";
 import { runProviderDoctor } from "./commands/handlers/provider-doctor.js";
 import { runProviderSmoke } from "./commands/handlers/provider-smoke.js";
-import { buildRecentPayload, runRecent } from "./commands/handlers/recent.js";
+import { buildRecentPayload, parseRecentQuery, runRecent } from "./commands/handlers/recent.js";
 import { buildBootstrapPayload, buildDoctorPayload, formatInvalidBootstrapPreset, parseBootstrapPreset, runBootstrap, runDoctor } from "./commands/handlers/onboarding.js";
 import { runReset } from "./commands/handlers/reset.js";
-import { buildArtifactReviewPayload, buildReviewHistoryPayload, buildReviewPayload, runReview, type ReviewMode } from "./commands/handlers/review.js";
+import {
+  buildArtifactReviewPayload,
+  buildCompareReviewPayload,
+  buildReviewHistoryPayload,
+  buildReviewPayload,
+  runReview,
+  type ReviewMode
+} from "./commands/handlers/review.js";
 import { buildFindPayload, buildGrepPayload, buildRecentSearchPayload, runSearch } from "./commands/handlers/search.js";
 import { runResume } from "./commands/handlers/resume.js";
-import { buildCompactStatusView, buildDashboardStatusView, buildStatusView, runCompactStatus, runDashboardStatus, runStatus } from "./commands/handlers/status.js";
+import {
+  buildCompactStatusView,
+  buildDashboardStatusView,
+  buildLaneStatusView,
+  buildReadinessStatusView,
+  buildShipStatusView,
+  buildTodayStatusView,
+  buildStatusView,
+  runCompactStatus,
+  runDashboardStatus,
+  runLaneStatus,
+  runReadinessStatus,
+  runShipStatus,
+  runTodayStatus,
+  runStatus
+} from "./commands/handlers/status.js";
 import { runTaskDone } from "./commands/handlers/task-done.js";
 import { runUnblock } from "./commands/handlers/unblock.js";
 import { runVerify } from "./commands/handlers/verify.js";
@@ -72,18 +103,37 @@ function normalizeCliInput(args: string[]): string {
 
 async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: string): Promise<string> {
   const trimmed = rawInput.trim();
-  const statusPayload = buildStatusView(runtime.getStatus(), await runtime.listArtifacts());
+  const runtimeStatus = runtime.getStatus();
+  const runtimeArtifacts = await runtime.listArtifacts();
+  const statusPayload = buildStatusView(runtimeStatus, runtimeArtifacts);
+  const doctorPayload = await buildDoctorPayload(runtimeCwd, runtime.getProviderReadiness());
+  const lanePayload = buildLaneStatusView(runtimeStatus, runtime.getTaskStateSnapshot());
+  const dashboardPayload = buildDashboardStatusView(
+    runtimeStatus,
+    runtimeArtifacts,
+    runtime.getBlockedPayload(),
+    await runtime.getReviewQueuePayload(),
+    runtime.getPickupPayload()
+  );
+  const readinessPayload = buildReadinessStatusView(runtimeStatus, doctorPayload);
+  const shipPayload = buildShipStatusView(readinessPayload);
+  const helpPayload = buildHelpPayload({
+    phase: runtimeStatus.phase,
+    goalSummary: runtimeStatus.goalSummary,
+    blocker: runtimeStatus.blocker,
+    hasRuntimeConfig: existsSync(join(runtimeCwd, ".harness", "config.json"))
+  });
 
   if (trimmed === "" || trimmed === "/status") {
     return runStatus(statusPayload);
   }
 
   if (trimmed === "/help") {
-    return runHelp();
+    return runHelp(helpPayload);
   }
 
   if (trimmed === "/help-json") {
-    return JSON.stringify(buildHelpPayload(), null, 2);
+    return JSON.stringify(helpPayload, null, 2);
   }
 
   if (trimmed === "/doctor") {
@@ -98,38 +148,82 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
     return JSON.stringify(statusPayload, null, 2);
   }
 
-  if (trimmed === "/status-compact" || trimmed === "/status compact") {
-    return runCompactStatus(buildCompactStatusView(runtime.getStatus(), await runtime.listArtifacts()));
-  }
-
-  if (trimmed === "/status-compact-json" || trimmed === "/status compact --json") {
-    return JSON.stringify(buildCompactStatusView(runtime.getStatus(), await runtime.listArtifacts()), null, 2);
-  }
-
-  if (trimmed === "/status-dashboard" || trimmed === "/status dashboard") {
-    return runDashboardStatus(
-      buildDashboardStatusView(
-        runtime.getStatus(),
-        await runtime.listArtifacts(),
-        runtime.getBlockedPayload(),
-        await runtime.getReviewQueuePayload(),
-        runtime.getPickupPayload()
-      )
+  if (trimmed === "/status-today" || trimmed === "/status today") {
+    return runTodayStatus(
+      buildTodayStatusView({
+        status: runtimeStatus,
+        dashboard: dashboardPayload,
+        lanes: lanePayload,
+        readiness: readinessPayload,
+        ship: shipPayload
+      })
     );
   }
 
-  if (trimmed === "/status-dashboard-json" || trimmed === "/status dashboard --json") {
+  if (trimmed === "/status-today-json" || trimmed === "/status today --json") {
     return JSON.stringify(
-      buildDashboardStatusView(
-        runtime.getStatus(),
-        await runtime.listArtifacts(),
-        runtime.getBlockedPayload(),
-        await runtime.getReviewQueuePayload(),
-        runtime.getPickupPayload()
-      ),
+      buildTodayStatusView({
+        status: runtimeStatus,
+        dashboard: dashboardPayload,
+        lanes: lanePayload,
+        readiness: readinessPayload,
+        ship: shipPayload
+      }),
       null,
       2
     );
+  }
+
+  if (trimmed === "/status-readiness" || trimmed === "/status readiness") {
+    return runReadinessStatus(readinessPayload);
+  }
+
+  if (trimmed === "/status-readiness-json" || trimmed === "/status readiness --json") {
+    return JSON.stringify(readinessPayload, null, 2);
+  }
+
+  if (trimmed === "/status-ship" || trimmed === "/status ship") {
+    return runShipStatus(shipPayload);
+  }
+
+  if (trimmed === "/status-ship-json" || trimmed === "/status ship --json") {
+    return JSON.stringify(shipPayload, null, 2);
+  }
+
+  if (trimmed === "/status-lanes" || trimmed === "/status lanes") {
+    return runLaneStatus(lanePayload);
+  }
+
+  if (trimmed === "/status-lanes-json" || trimmed === "/status lanes --json") {
+    return JSON.stringify(lanePayload, null, 2);
+  }
+
+  if (trimmed === "/auto" || trimmed.startsWith("/auto ")) {
+    const raw = trimmed.replace(/^\/auto\s*/, "").trim();
+    const { goal, maxSteps } = parseAutoArgs(raw);
+    return runAuto(await runtime.runAuto(goal ?? undefined, maxSteps));
+  }
+
+  if (trimmed === "/auto-json" || trimmed.startsWith("/auto-json ")) {
+    const raw = trimmed.replace(/^\/auto-json\s*/, "").trim();
+    const { goal, maxSteps } = parseAutoArgs(raw);
+    return JSON.stringify(await runtime.runAuto(goal ?? undefined, maxSteps), null, 2);
+  }
+
+  if (trimmed === "/status-compact" || trimmed === "/status compact") {
+    return runCompactStatus(buildCompactStatusView(runtimeStatus, runtimeArtifacts));
+  }
+
+  if (trimmed === "/status-compact-json" || trimmed === "/status compact --json") {
+    return JSON.stringify(buildCompactStatusView(runtimeStatus, runtimeArtifacts), null, 2);
+  }
+
+  if (trimmed === "/status-dashboard" || trimmed === "/status dashboard") {
+    return runDashboardStatus(dashboardPayload);
+  }
+
+  if (trimmed === "/status-dashboard-json" || trimmed === "/status dashboard --json") {
+    return JSON.stringify(dashboardPayload, null, 2);
   }
 
   if (trimmed === "/artifacts" || trimmed.startsWith("/artifacts ")) {
@@ -140,6 +234,11 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
     return runArtifacts(await runtime.listArtifacts(), filter);
   }
 
+  if (trimmed === "/artifacts-inspect" || trimmed.startsWith("/artifacts-inspect ")) {
+    const rawTarget = trimmed.replace(/^\/artifacts-inspect\s*/, "");
+    return runArtifactInspect(await buildArtifactInspectPayload(await runtime.listArtifacts(), rawTarget, path => runtime.readArtifact(path)));
+  }
+
   if (trimmed === "/artifacts-json" || trimmed.startsWith("/artifacts-json ")) {
     const { filter, invalidFilter } = parseArtifactFilter(trimmed.replace(/^\/artifacts-json\s*/, ""));
     if (invalidFilter) {
@@ -147,6 +246,15 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
     }
     const artifacts = await runtime.listArtifacts();
     return JSON.stringify(filter ? artifacts.filter(artifact => artifact.type === filter) : artifacts, null, 2);
+  }
+
+  if (trimmed === "/artifacts-inspect-json" || trimmed.startsWith("/artifacts-inspect-json ")) {
+    const rawTarget = trimmed.replace(/^\/artifacts-inspect-json\s*/, "");
+    return JSON.stringify(
+      await buildArtifactInspectPayload(await runtime.listArtifacts(), rawTarget, path => runtime.readArtifact(path)),
+      null,
+      2
+    );
   }
 
   if (trimmed === "/artifacts-related" || trimmed.startsWith("/artifacts-related ")) {
@@ -275,21 +383,29 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
 
   if (trimmed === "/recent" || trimmed.startsWith("/recent ")) {
     const filter = trimmed.replace(/^\/recent\s*/, "");
-    const parsed = parseArtifactFilter(filter);
+    const parsed = parseRecentQuery(filter);
     if (parsed.invalidFilter) {
       return formatInvalidArtifactFilter(parsed.invalidFilter);
     }
-    return runRecent(buildRecentPayload(await runtime.listArtifacts(), filter, runtime.getStatus()));
+    return runRecent(
+      await buildRecentPayload(await runtime.listArtifacts(), filter, runtime.getStatus(), {
+        readArtifact: path => runtime.readArtifact(path),
+        relatedArtifacts: runtime.getRelatedArtifactsPayload()
+      })
+    );
   }
 
   if (trimmed === "/recent-json" || trimmed.startsWith("/recent-json ")) {
     const filter = trimmed.replace(/^\/recent-json\s*/, "");
-    const parsed = parseArtifactFilter(filter);
+    const parsed = parseRecentQuery(filter);
     if (parsed.invalidFilter) {
       return JSON.stringify({ error: formatInvalidArtifactFilter(parsed.invalidFilter) }, null, 2);
     }
     return JSON.stringify(
-      buildRecentSearchPayload(await runtime.listArtifacts(), filter, runtimeCwd, runtime.getStatus()),
+      await buildRecentSearchPayload(await runtime.listArtifacts(), filter, runtimeCwd, runtime.getStatus(), {
+        readArtifact: path => runtime.readArtifact(path),
+        relatedArtifacts: runtime.getRelatedArtifactsPayload()
+      }),
       null,
       2
     );
@@ -316,7 +432,7 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
     if (parsed.invalidPreset) {
       return formatInvalidBootstrapPreset(parsed.invalidPreset);
     }
-    return runBootstrap(buildBootstrapPayload(parsed.preset));
+    return runBootstrap(buildBootstrapPayload(parsed.preset, runtimeCwd));
   }
 
   if (trimmed === "/bootstrap-json" || trimmed.startsWith("/bootstrap-json ")) {
@@ -324,7 +440,7 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
     if (parsed.invalidPreset) {
       return JSON.stringify({ error: formatInvalidBootstrapPreset(parsed.invalidPreset) }, null, 2);
     }
-    return JSON.stringify(buildBootstrapPayload(parsed.preset), null, 2);
+    return JSON.stringify(buildBootstrapPayload(parsed.preset, runtimeCwd), null, 2);
   }
 
   if (trimmed.startsWith("/loop-json")) {
@@ -347,6 +463,66 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
     return JSON.stringify(
       {
         path: await runtime.createHandoff(),
+        status: runtime.getStatus()
+      },
+      null,
+      2
+    );
+  }
+
+  if (trimmed === "/handoff-inspect" || trimmed === "/handoff inspect") {
+    const status = runtime.getStatus();
+    const body = status.lastHandoffPath ? await runtime.readArtifact(status.lastHandoffPath).catch(() => "") : "";
+    return runHandoffInspect(
+      buildHandoffInspectPayload({
+        phase: status.phase,
+        goal: status.goalSummary,
+        path: status.lastHandoffPath,
+        preview: buildHandoffPreview(body),
+        nextAction: status.nextAction ?? null
+      })
+    );
+  }
+
+  if (trimmed === "/handoff-inspect-json" || trimmed === "/handoff inspect --json") {
+    const status = runtime.getStatus();
+    const body = status.lastHandoffPath ? await runtime.readArtifact(status.lastHandoffPath).catch(() => "") : "";
+    return JSON.stringify(
+      {
+        ...buildHandoffInspectPayload({
+          phase: status.phase,
+          goal: status.goalSummary,
+          path: status.lastHandoffPath,
+          preview: buildHandoffPreview(body),
+          nextAction: status.nextAction ?? null
+        }),
+        status
+      },
+      null,
+      2
+    );
+  }
+
+  if (trimmed === "/handoff-cleanup" || trimmed === "/handoff cleanup") {
+    const result = await runtime.clearHandoff();
+    return runHandoffCleanup(
+      buildHandoffCleanupPayload({
+        ...result,
+        phase: runtime.getStatus().phase,
+        remainingPath: runtime.getStatus().lastHandoffPath
+      })
+    );
+  }
+
+  if (trimmed === "/handoff-cleanup-json" || trimmed === "/handoff cleanup --json") {
+    const result = await runtime.clearHandoff();
+    return JSON.stringify(
+      {
+        ...buildHandoffCleanupPayload({
+          ...result,
+          phase: runtime.getStatus().phase,
+          remainingPath: runtime.getStatus().lastHandoffPath
+        }),
         status: runtime.getStatus()
       },
       null,
@@ -432,8 +608,13 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
     if (subcommand === "history") {
       return runReview(buildReviewHistoryPayload(artifacts, runtime.getStatus()));
     }
+    if (subcommand === "compare") {
+      return runReview(await buildCompareReviewPayload(artifacts, runtime.getStatus(), path => runtime.readArtifact(path)));
+    }
     if (subcommand === "artifact") {
-      return runReview(await buildArtifactReviewPayload(rest.join(" "), artifacts, runtime.getStatus()));
+      return runReview(
+        await buildArtifactReviewPayload(rest.join(" "), artifacts, runtime.getStatus(), path => runtime.readArtifact(path))
+      );
     }
     const mode: ReviewMode = subcommand === "diff" || subcommand === "deep" ? subcommand : "quick";
     const target = mode === "diff" ? rest.join(" ") || null : null;
@@ -443,7 +624,8 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
         mode,
         cwd: runtimeCwd,
         artifacts,
-        target
+        target,
+        readArtifact: path => runtime.readArtifact(path)
       })
     );
   }
@@ -455,10 +637,25 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
     if (subcommand === "history") {
       return JSON.stringify({ ...buildReviewHistoryPayload(artifacts, runtime.getStatus()), status: runtime.getStatus() }, null, 2);
     }
+    if (subcommand === "compare") {
+      return JSON.stringify(
+        {
+          ...(await buildCompareReviewPayload(artifacts, runtime.getStatus(), path => runtime.readArtifact(path))),
+          status: runtime.getStatus()
+        },
+        null,
+        2
+      );
+    }
     if (subcommand === "artifact") {
       return JSON.stringify(
         {
-          ...(await buildArtifactReviewPayload(rest.join(" "), artifacts, runtime.getStatus())),
+          ...(await buildArtifactReviewPayload(
+            rest.join(" "),
+            artifacts,
+            runtime.getStatus(),
+            path => runtime.readArtifact(path)
+          )),
           status: runtime.getStatus()
         },
         null,
@@ -474,7 +671,8 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
           mode,
           cwd: runtimeCwd,
           artifacts,
-          target
+          target,
+          readArtifact: path => runtime.readArtifact(path)
         })),
         status: runtime.getStatus()
       },
@@ -499,7 +697,7 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
     return JSON.stringify({ result: await runtime.reset(), status: runtime.getStatus() }, null, 2);
   }
 
-  const normalized = trimmed.startsWith("/") ? trimmed : runAuto(trimmed);
+  const normalized = trimmed.startsWith("/") ? trimmed : normalizeAutoInput(trimmed);
   return runtime.handleInput(normalized);
 }
 
@@ -566,10 +764,23 @@ export async function main(): Promise<void> {
   const shouldHidePanel =
     input === "/help" ||
     input === "/doctor" ||
+    input.startsWith("/auto-json") ||
     input === "/bootstrap" ||
     input === "/status-json" ||
     input === "/status-dashboard" ||
     input === "/status-dashboard-json" ||
+    input === "/status-today-json" ||
+    input === "/status today --json" ||
+    input === "/status-ship-json" ||
+    input === "/status ship --json" ||
+    input === "/status-readiness-json" ||
+    input === "/status readiness --json" ||
+    input === "/status-lanes-json" ||
+    input === "/status lanes --json" ||
+    input === "/handoff-inspect-json" ||
+    input === "/handoff-cleanup-json" ||
+    input === "/handoff inspect --json" ||
+    input === "/handoff cleanup --json" ||
     input === "/doctor-json" ||
     input.startsWith("/bootstrap ") ||
     input.startsWith("/bootstrap-json") ||
@@ -585,6 +796,7 @@ export async function main(): Promise<void> {
     input === "/web-smoke-json" ||
     input === "/web-verify-json" ||
     input === "/artifacts-json" ||
+    input.startsWith("/artifacts-inspect-json") ||
     input.startsWith("/artifacts-related-json") ||
     input === "/advance-json" ||
     input === "/blocked-json" ||

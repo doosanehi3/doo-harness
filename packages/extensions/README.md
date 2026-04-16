@@ -50,9 +50,13 @@ Then verify:
 
 ```bash
 /harness help --json
+/harness status today --json
 /harness status --json
+/harness status readiness --json
+/harness status ship --json
 /harness find --json plan
-/harness review --json
+/harness review compare --json
+/harness handoff inspect --json
 ```
 
 Scriptable UI capture:
@@ -68,3 +72,8 @@ pnpm run smoke:pi:ui
 - `ripgrep` (`rg`) must be present on `PATH` for `find` and `grep`
 - runtime ownership remains in Harness; this package only hosts the command
   surface inside `pi`
+- the highest-signal operator entrypoints today are:
+  - `/harness status today --json`
+  - `/harness status dashboard --json`
+  - `/harness status readiness --json`
+  - `/harness status ship --json`

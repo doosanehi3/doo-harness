@@ -22,8 +22,9 @@ export function runQueue(payload: QueuePayload): string {
     `Phase: ${payload.phase}`,
     `Active task: ${payload.activeTaskId ?? "-"}${payload.activeTaskText ? ` ${payload.activeTaskText}` : ""}`,
     ...payload.items.flatMap(item => [
-      `- ${item.kind}/${item.priority}: ${item.label}`,
+      `- ${item.kind}/${item.priority}/${item.score}: ${item.label}`,
       `  rationale=${item.rationale}`,
+      `  command=${item.recommendedCommand}`,
       `  ${item.detail}`
     ])
   ].join("\n");
@@ -36,6 +37,9 @@ export function runPickup(payload: PickupPayload): string {
     `Active task: ${payload.activeTaskId ?? "-"}${payload.activeTaskText ? ` ${payload.activeTaskText}` : ""}`,
     `Target: ${payload.target ?? "-"}`,
     `Rationale: ${payload.rationale}`,
+    `Urgency: ${payload.urgency}`,
+    `Recommended: ${payload.recommendedCommand}`,
+    `Alternatives: ${payload.alternatives.length > 0 ? payload.alternatives.join(" | ") : "-"}`,
     `Blocker: ${payload.blocker ?? "-"}`,
     `Ready tasks: ${payload.readyTasks.length > 0 ? payload.readyTasks.join(" | ") : "-"}`,
     `Pending dependencies: ${payload.pendingDependencies.length > 0 ? payload.pendingDependencies.join(" | ") : "-"}`,

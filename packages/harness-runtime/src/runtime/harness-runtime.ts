@@ -127,9 +127,11 @@ export interface BlockedPayload {
 export interface QueueEntry {
   kind: "task" | "artifact";
   priority: "high" | "medium" | "low";
+  score: number;
   label: string;
   rationale: string;
   detail: string;
+  recommendedCommand: string;
 }
 
 export interface QueuePayload {
@@ -154,6 +156,9 @@ export interface PickupPayload {
   readyTasks: string[];
   pendingDependencies: string[];
   blocker: string | null;
+  recommendedCommand: string;
+  alternatives: string[];
+  urgency: "high" | "medium" | "low";
 }
 
 export interface RelatedArtifactEntry {
@@ -189,6 +194,15 @@ export interface TimelinePayload {
   activeTaskText: string | null;
   items: TimelineEntry[];
   summary: string;
+  recovery: {
+    latestFailurePath: string | null;
+    latestPassPath: string | null;
+    latestReviewPath: string | null;
+    latestHandoffPath: string | null;
+    blocker: string | null;
+    recoveryHint: string | null;
+    recommendation: string | null;
+  };
 }
 
 export interface CompletionLoopResult {
@@ -199,6 +213,26 @@ export interface CompletionLoopResult {
   finalTaskId: string | null;
   blocker: string | null;
   completed: boolean;
+}
+
+export interface AutoRunPayload {
+  mode: "auto";
+  entry: "planned" | "continued" | "idle";
+  goal: string | null;
+  startedNewPlan: boolean;
+  specPath: string | null;
+  planPath: string | null;
+  milestonePath: string | null;
+  steps: string[];
+  stopReason: CompletionLoopResult["stopReason"] | "idle_requires_goal";
+  finalPhase: string;
+  finalMilestoneId: string | null;
+  finalTaskId: string | null;
+  blocker: string | null;
+  completed: boolean;
+  nextAction: string | null;
+  pickup: PickupPayload;
+  summary: string;
 }
 
 export interface ProviderRoleReadiness {
@@ -1144,9 +1178,11 @@ export class HarnessRuntime {
       items.push({
         kind: "task",
         priority: "high",
+        score: 100,
         label,
         rationale: "validated active task is ready for operator review",
-        detail: status.nextAction
+        detail: status.nextAction,
+        recommendedCommand: "harness review deep --json"
       });
       seenTaskLabels.add(label);
     }
@@ -1157,12 +1193,35 @@ export class HarnessRuntime {
         items.push({
           kind: "task",
           priority: "high",
+          score: 95,
           label,
           rationale: "runtime is already paused in reviewing phase",
-          detail: "Runtime is currently in reviewing phase."
+          detail: "Runtime is currently in reviewing phase.",
+          recommendedCommand: "harness review deep --json"
         });
         seenTaskLabels.add(label);
       }
+    }
+
+    const validatedTasks = Object.entries(this.session.taskState.tasks)
+      .filter(([taskId, taskStatus]) => taskStatus === "validated" && taskId !== status.activeTaskId)
+      .sort(([leftId], [rightId]) => leftId.localeCompare(rightId, undefined, { numeric: true }));
+
+    for (const [taskId] of validatedTasks) {
+      const label = `${taskId} ${this.session.taskState.taskTexts[taskId] ?? ""}`.trim();
+      if (seenTaskLabels.has(label)) {
+        continue;
+      }
+      items.push({
+        kind: "task",
+        priority: "high",
+        score: 85,
+        label,
+        rationale: "validated task is ready for review even though it is not the active focus",
+        detail: this.formatTaskDescriptor(taskId),
+        recommendedCommand: "harness review deep --json"
+      });
+      seenTaskLabels.add(label);
     }
 
     const recentArtifacts = (await this.listArtifacts())
@@ -1174,6 +1233,7 @@ export class HarnessRuntime {
       items.push({
         kind: "artifact",
         priority: artifact.type === "review" ? "medium" : "low",
+        score: artifact.type === "review" ? 60 : 40,
         label: `${artifact.type}: ${artifact.path}`,
         rationale: artifact.type === "review" ? "latest review artifact" : "latest verification artifact",
         detail:
@@ -1184,15 +1244,25 @@ export class HarnessRuntime {
               ]
                 .filter(Boolean)
                 .join(" ")
-            : "recent review-related artifact"
+            : "recent review-related artifact",
+        recommendedCommand:
+          artifact.type === "review"
+            ? "harness review artifact review --json"
+            : "harness review artifact verification --json"
       });
     }
 
     items.sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
       const priorityOrder = { high: 0, medium: 1, low: 2 } as const;
       const leftRank = priorityOrder[left.priority];
       const rightRank = priorityOrder[right.priority];
-      return leftRank - rightRank;
+      if (leftRank !== rightRank) {
+        return leftRank - rightRank;
+      }
+      return left.label.localeCompare(right.label);
     });
 
     return {
@@ -1208,6 +1278,7 @@ export class HarnessRuntime {
 
   getPickupPayload(): PickupPayload {
     const status = this.getStatus();
+    const activeTaskStatus = status.activeTaskId ? this.session.taskState.tasks[status.activeTaskId] ?? null : null;
     const selected = status.blocker
       ? { kind: "blocked" as const, target: status.activeTaskId, rationale: "active task is blocked and needs recovery before new work starts" }
       : status.activeTaskId
@@ -1217,6 +1288,14 @@ export class HarnessRuntime {
           : status.pendingDependencies.length > 0
             ? { kind: "waiting" as const, target: status.pendingDependencies[0] ?? null, rationale: "no ready tasks yet; dependencies still gate progress" }
             : { kind: "idle" as const, target: null, rationale: "runtime has no active or ready work yet" };
+
+    const recommendation = this.buildPickupRecommendation(
+      selected.kind,
+      activeTaskStatus,
+      status.goalSummary,
+      status.blocker,
+      status.nextAction ?? null
+    );
 
     return {
       mode: "pickup",
@@ -1229,7 +1308,10 @@ export class HarnessRuntime {
       nextAction: status.nextAction ?? null,
       readyTasks: status.readyTasks,
       pendingDependencies: status.pendingDependencies,
-      blocker: status.blocker
+      blocker: status.blocker,
+      recommendedCommand: recommendation.recommendedCommand,
+      alternatives: recommendation.alternatives,
+      urgency: recommendation.urgency
     };
   }
 
@@ -1334,6 +1416,11 @@ export class HarnessRuntime {
   async getTimelinePayload(): Promise<TimelinePayload> {
     const status = this.getStatus();
     const artifacts = await this.listArtifacts();
+    const activeTaskId = this.session.taskState.activeTaskId ?? this.session.state.activeTaskId;
+    const recoveryTaskId =
+      (activeTaskId && this.session.taskState.taskRecoveryHints[activeTaskId] ? activeTaskId : null) ??
+      Object.keys(this.session.taskState.taskRecoveryHints).find(taskId => Boolean(this.session.taskState.taskRecoveryHints[taskId])) ??
+      null;
     const items: TimelineEntry[] = [
       {
         kind: "runtime",
@@ -1369,13 +1456,28 @@ export class HarnessRuntime {
       });
     }
 
+    const latestFailure = artifacts.find(item => item.type === "verification" && item.path === this.session.state.lastVerificationPath && status.lastVerificationStatus !== "pass")
+      ?? artifacts.find(item => item.type === "verification" && item.relatedTaskId && status.blocker);
+    const latestPass = status.lastVerificationStatus === "pass"
+      ? artifacts.find(item => item.path === this.session.state.lastVerificationPath) ?? null
+      : null;
+
     return {
       mode: "timeline",
       phase: status.phase,
       activeTaskId: status.activeTaskId,
       activeTaskText: status.activeTaskText,
       items: items.sort((left, right) => right.timestamp.localeCompare(left.timestamp)),
-      summary: `${items.length} timeline event(s).`
+      summary: `${items.length} timeline event(s).`,
+      recovery: {
+        latestFailurePath: latestFailure?.path ?? null,
+        latestPassPath: latestPass?.path ?? null,
+        latestReviewPath: this.session.state.lastReviewPath,
+        latestHandoffPath: this.session.state.lastHandoffPath,
+        blocker: status.blocker,
+        recoveryHint: recoveryTaskId ? this.session.taskState.taskRecoveryHints[recoveryTaskId] ?? null : null,
+        recommendation: status.nextAction ?? null
+      }
     };
   }
 
@@ -1887,6 +1989,59 @@ export class HarnessRuntime {
         return `Use /continue or /resume to re-enter ${this.session.taskState.resumePhase}.`;
       }
       return "Use /status, /continue, or /plan to move forward.";
+  }
+
+  private buildPickupRecommendation(
+    pickupKind: PickupPayload["pickupKind"],
+    activeTaskStatus: "todo" | "in_progress" | "validated" | "done" | "blocked" | null,
+    goalSummary: string | null,
+    blocker: string | null,
+    nextAction: string | null
+  ): { recommendedCommand: string; alternatives: string[]; urgency: PickupPayload["urgency"] } {
+    if (pickupKind === "blocked") {
+      const recommendedCommand = this.isAutoRecoverableBlockedTask(this.session.taskState.activeTaskId ?? this.session.state.activeTaskId)
+        ? "harness continue"
+        : "harness blocked --json";
+      return {
+        recommendedCommand,
+        alternatives: ["harness status dashboard --json", blocker ? "harness unblock" : "harness handoff inspect --json"],
+        urgency: "high"
+      };
+    }
+
+    if (pickupKind === "active-task") {
+      const recommendedCommand =
+        activeTaskStatus === "validated" || activeTaskStatus === "done" || activeTaskStatus === "in_progress" || activeTaskStatus === "todo"
+          ? "harness continue"
+          : "harness status --json";
+      return {
+        recommendedCommand,
+        alternatives: ["harness status dashboard --json", "harness queue review --json"],
+        urgency: activeTaskStatus === "validated" ? "high" : "medium"
+      };
+    }
+
+    if (pickupKind === "ready-task") {
+      return {
+        recommendedCommand: "harness continue",
+        alternatives: ["harness status dashboard --json", "harness queue review --json"],
+        urgency: "medium"
+      };
+    }
+
+    if (pickupKind === "waiting") {
+      return {
+        recommendedCommand: "harness status dashboard --json",
+        alternatives: ["harness blocked --json", "harness handoff inspect --json"],
+        urgency: "low"
+      };
+    }
+
+    return {
+      recommendedCommand: goalSummary ? "harness auto" : "harness auto <goal>",
+      alternatives: goalSummary ? ["harness status --json", "harness handoff inspect --json"] : ["harness plan <goal>", "harness doctor --json"],
+      urgency: "low"
+    };
   }
 
   private getHandoffEligibility(): { eligible: boolean; reason: string | null } {
@@ -3357,6 +3512,148 @@ Goal: ${input}
     return this.session.state.phase;
   }
 
+  async readArtifact(path: string): Promise<string> {
+    return this.artifactStore.read(path);
+  }
+
+  async clearHandoff(): Promise<{ cleared: boolean; previousPath: string | null; reason: string }> {
+    const previousPath = this.session.state.lastHandoffPath ?? this.session.taskState.lastHandoffPath ?? null;
+    const isActivePhase =
+      this.session.state.phase !== "idle" &&
+      this.session.state.phase !== "completed" &&
+      this.session.state.phase !== "cancelled";
+
+    if (isActivePhase) {
+      return {
+        cleared: false,
+        previousPath,
+        reason: "Handoff cleanup is only allowed when the runtime is inactive."
+      };
+    }
+
+    if (previousPath === null) {
+      return {
+        cleared: false,
+        previousPath: null,
+        reason: "No preserved handoff is present."
+      };
+    }
+
+    this.session.state.lastHandoffPath = null;
+    this.session.taskState.lastHandoffPath = null;
+    await this.persist();
+    return {
+      cleared: true,
+      previousPath,
+      reason: "Preserved handoff pointer cleared."
+    };
+  }
+
+  async runAuto(goal?: string, maxSteps = 10): Promise<AutoRunPayload> {
+    const trimmedGoal = goal?.trim() ?? "";
+    const isActiveRun =
+      this.session.state.phase !== "idle" &&
+      this.session.state.phase !== "completed" &&
+      this.session.state.phase !== "cancelled";
+
+    if (isActiveRun && trimmedGoal && trimmedGoal !== (this.session.state.goalSummary ?? "")) {
+      const status = this.getStatus();
+      const blocker = `Active goal already running: ${this.session.state.goalSummary ?? "(unknown goal)"}. Reset or handoff before starting a new goal.`;
+      return {
+        mode: "auto",
+        entry: "continued",
+        goal: status.goalSummary,
+        startedNewPlan: false,
+        specPath: status.activeSpecPath,
+        planPath: status.activePlanPath,
+        milestonePath: this.getMilestoneArtifactPath(),
+        steps: [],
+        stopReason: "blocked",
+        finalPhase: status.phase,
+        finalMilestoneId: status.activeMilestoneId,
+        finalTaskId: status.activeTaskId,
+        blocker,
+        completed: false,
+        nextAction: status.nextAction ?? null,
+        pickup: this.getPickupPayload(),
+        summary: blocker
+      };
+    }
+
+    let startedNewPlan = false;
+    let plannedPaths: { specPath: string | null; planPath: string | null; milestonePath: string | null } = {
+      specPath: this.session.state.activeSpecPath,
+      planPath: this.session.state.activePlanPath,
+      milestonePath: this.getMilestoneArtifactPath()
+    };
+
+    if (!isActiveRun && trimmedGoal) {
+      const planned = await this.plan(trimmedGoal, true);
+      startedNewPlan = true;
+      plannedPaths = {
+        specPath: planned.specPath,
+        planPath: planned.planPath,
+        milestonePath: planned.milestonePath ?? null
+      };
+    } else if (!isActiveRun && this.session.state.activePlanPath === null && trimmedGoal.length === 0) {
+      const status = this.getStatus();
+      return {
+        mode: "auto",
+        entry: "idle",
+        goal: null,
+        startedNewPlan: false,
+        specPath: null,
+        planPath: null,
+        milestonePath: null,
+        steps: [],
+        stopReason: "idle_requires_goal",
+        finalPhase: status.phase,
+        finalMilestoneId: status.activeMilestoneId,
+        finalTaskId: status.activeTaskId,
+        blocker: status.blocker,
+        completed: false,
+        nextAction: status.nextAction ?? null,
+        pickup: this.getPickupPayload(),
+        summary: "No active goal. Provide a goal to start autonomous runtime work."
+      };
+    }
+
+    const loop =
+      maxSteps > 0
+        ? await this.runCompletionLoopDetailed(maxSteps)
+        : {
+            steps: [],
+            stopReason: "max_steps" as const,
+            finalPhase: this.session.state.phase,
+            finalMilestoneId: this.session.taskState.activeMilestoneId ?? this.session.state.activeMilestoneId,
+            finalTaskId: this.session.taskState.activeTaskId ?? this.session.state.activeTaskId,
+            blocker: this.session.state.blocker,
+            completed: this.session.state.phase === "completed"
+          };
+
+    const status = this.getStatus();
+
+    return {
+      mode: "auto",
+      entry: startedNewPlan ? "planned" : "continued",
+      goal: status.goalSummary,
+      startedNewPlan,
+      specPath: plannedPaths.specPath ?? status.activeSpecPath,
+      planPath: plannedPaths.planPath ?? status.activePlanPath,
+      milestonePath: plannedPaths.milestonePath ?? this.getMilestoneArtifactPath(),
+      steps: loop.steps,
+      stopReason: loop.stopReason,
+      finalPhase: loop.finalPhase,
+      finalMilestoneId: loop.finalMilestoneId,
+      finalTaskId: loop.finalTaskId,
+      blocker: loop.blocker,
+      completed: loop.completed,
+      nextAction: status.nextAction ?? null,
+      pickup: this.getPickupPayload(),
+      summary: this.summarizeAutoRun(loop, startedNewPlan, status.nextAction ?? null)
+    };
+  }
+
   async handleInput(rawInput: string): Promise<string> {
     const isExplicitCommand = rawInput.trim().startsWith("/");
     if (!isExplicitCommand) {
@@ -3508,5 +3805,30 @@ Goal: ${input}
   private async persist(): Promise<void> {
     await saveRunState(this.statePath, this.session.state);
     await saveTaskState(this.taskStatePath, this.session.taskState as TaskState);
+  }
+
+  private getMilestoneArtifactPath(): string | null {
+    const milestonePath = join(this.session.cwd, ".harness", "artifacts", "milestones.md");
+    return existsSync(milestonePath) ? milestonePath : null;
+  }
+
+  private summarizeAutoRun(
+    loop: CompletionLoopResult,
+    startedNewPlan: boolean,
+    nextAction: string | null
+  ): string {
+    if (loop.stopReason === "completed") {
+      return "Autonomous run completed the current goal.";
+    }
+    if (loop.stopReason === "blocked") {
+      return `Autonomous run stopped on a blocker.${loop.blocker ? ` ${loop.blocker}` : ""}`;
+    }
+    if (loop.stopReason === "no_progress") {
+      return `Autonomous run made no progress.${nextAction ? ` Next: ${nextAction}` : ""}`;
+    }
+    if (startedNewPlan && loop.steps.length === 0) {
+      return `Goal planned and ready.${nextAction ? ` Next: ${nextAction}` : ""}`;
+    }
+    return `Autonomous run stopped after ${loop.steps.length} step(s).${nextAction ? ` Next: ${nextAction}` : ""}`;
   }
 }

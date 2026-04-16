@@ -1,7 +1,8 @@
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
-import type { ArtifactMeta, RuntimeStatus } from "@doo/harness-runtime";
+import type { ArtifactMeta, RelatedArtifactsPayload, RuntimeStatus } from "@doo/harness-runtime";
 import { filterArtifacts, parseArtifactFilter } from "./artifacts.js";
+import { buildRecentPayload, type RecentPayloadOptions } from "./recent.js";
 
 const execFile = promisify(execFileCb);
 const SEARCH_LIMIT = 20;
@@ -111,41 +112,31 @@ export async function buildGrepPayload(cwd: string, query: string, status: Runti
   };
 }
 
-export function buildRecentSearchPayload(
+export async function buildRecentSearchPayload(
   artifacts: ArtifactMeta[],
   rawFilter: string,
   cwd: string,
-  status: RuntimeStatus
-): SearchPayload {
-  const { filter } = parseArtifactFilter(rawFilter);
-  const filtered = filterArtifacts(artifacts, filter).slice(0, SEARCH_LIMIT);
-  const matches = filtered.map(item => item.path);
-  const grouped = new Map<string, string[]>();
-  for (const artifact of filtered) {
-    const bucket = grouped.get(artifact.type) ?? [];
-    bucket.push(artifact.path);
-    grouped.set(artifact.type, bucket);
-  }
+  status: RuntimeStatus,
+  options: RecentPayloadOptions = {}
+): Promise<SearchPayload> {
+  const recent = await buildRecentPayload(artifacts, rawFilter, status, options, SEARCH_LIMIT);
 
   return {
     mode: "recent",
-    query: filter ?? "artifacts",
+    query: recent.filter ?? "artifacts",
     cwd,
     phase: status.phase,
     taskId: status.activeTaskId,
     taskText: status.activeTaskText,
-    matches,
-    groups:
-      filter !== null
-        ? [
-            {
-              label: `recent ${filter}`,
-              matches
-            }
-          ]
-        : [...grouped.entries()].map(([label, entries]) => ({ label: `recent ${label}`, matches: entries })),
+    matches: recent.matches,
+    groups: recent.groups,
     truncated: false,
-    command: `runtime.listArtifacts(${filter ? `filter=${filter}` : "all"})`
+    command:
+      recent.filter === "failures"
+        ? "runtime.listArtifacts(non-pass verification recall)"
+        : recent.filter === "active-task"
+          ? "runtime.getRelatedArtifactsPayload(active task)"
+          : `runtime.listArtifacts(${recent.filter ? `filter=${recent.filter}` : "all"})`
   };
 }
 

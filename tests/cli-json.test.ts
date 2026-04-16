@@ -117,6 +117,119 @@ test("status compact json returns a machine-readable compact summary", async () 
   }
 });
 
+test("status lanes json returns active and ready lane summaries", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-status-lanes-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI status lanes demo", true);
+
+    const output = await runCli(cwd, "status", "lanes", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      active: { taskId: string | null; owner: string | null; executionMode: string; modelId: string };
+      ready: Array<{ taskId: string; owner: string | null }>;
+    };
+
+    assert.equal(parsed.mode, "lanes");
+    assert.equal(parsed.active.taskId, "T1");
+    assert.equal(parsed.active.owner, "planner");
+    assert.ok(parsed.active.executionMode.length > 0);
+    assert.ok(parsed.active.modelId.length > 0);
+    assert.ok(parsed.ready.length > 0);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("status readiness json returns aggregated readiness guidance", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-status-readiness-"));
+  try {
+    const output = await runCli(cwd, "status", "readiness", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      configReady: boolean;
+      providerReady: boolean;
+      handoffReady: boolean;
+      recommendedCommand: string;
+      summary: string;
+      validationTracks: Array<{ kind: string; commands: string[] }>;
+    };
+
+    assert.equal(parsed.mode, "readiness");
+    assert.equal(typeof parsed.configReady, "boolean");
+    assert.equal(typeof parsed.providerReady, "boolean");
+    assert.equal(typeof parsed.handoffReady, "boolean");
+    assert.ok(parsed.recommendedCommand.length > 0);
+    assert.ok(parsed.summary.length > 0);
+    assert.ok(parsed.validationTracks.some(track => track.kind === "local"));
+    assert.ok(parsed.validationTracks.some(track => track.kind === "interactive"));
+    assert.ok(parsed.validationTracks.some(track => track.kind === "release"));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("status ship json returns release checklist and release note sections", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-status-ship-"));
+  try {
+    const output = await runCli(cwd, "status", "ship", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      shipReady: boolean;
+      recommendedCommand: string;
+      summary: string;
+      releaseChecks: string[];
+      releaseNotes: string[];
+    };
+
+    assert.equal(parsed.mode, "ship");
+    assert.equal(typeof parsed.shipReady, "boolean");
+    assert.ok(parsed.recommendedCommand.length > 0);
+    assert.ok(parsed.summary.length > 0);
+    assert.ok(parsed.releaseChecks.length > 0);
+    assert.ok(parsed.releaseNotes.includes("Summary"));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("status today json returns a single operator briefing payload", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-status-today-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI status today demo", true);
+
+    const output = await runCli(cwd, "status", "today", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      phase: string;
+      goal: string | null;
+      nextAction: string | null;
+      summary: string;
+      blockerCount: number;
+      reviewQueueCount: number;
+      pickupKind: string;
+      activeLane: { taskId: string | null; owner: string | null };
+      readinessRecommendedCommand: string;
+      shipRecommendedCommand: string;
+    };
+
+    assert.equal(parsed.mode, "today");
+    assert.equal(parsed.phase, "planning");
+    assert.ok(parsed.goal?.length);
+    assert.ok(parsed.nextAction?.length);
+    assert.ok(parsed.summary.length > 0);
+    assert.equal(typeof parsed.blockerCount, "number");
+    assert.equal(typeof parsed.reviewQueueCount, "number");
+    assert.ok(parsed.pickupKind.length > 0);
+    assert.equal(parsed.activeLane.taskId, "T1");
+    assert.ok(parsed.readinessRecommendedCommand.length > 0);
+    assert.ok(parsed.shipRecommendedCommand.length > 0);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("status dashboard json returns a grouped action-oriented summary", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-status-dashboard-"));
   try {
@@ -130,12 +243,17 @@ test("status dashboard json returns a grouped action-oriented summary", async ()
       blocked: { items: unknown[] };
       reviewQueue: { items: unknown[] };
       pickup: { pickupKind: string };
+      handoff: { eligible: boolean; reason: string | null; path: string | null };
+      auto: { recommendedCommand: string; rationale: string };
     };
 
     assert.equal(parsed.mode, "dashboard");
     assert.ok(parsed.blocked.items.length > 0);
     assert.ok(Array.isArray(parsed.reviewQueue.items));
     assert.equal(parsed.pickup.pickupKind, "blocked");
+    assert.equal(typeof parsed.handoff.eligible, "boolean");
+    assert.ok(parsed.auto.recommendedCommand.length > 0);
+    assert.ok(parsed.auto.rationale.length > 0);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -190,14 +308,37 @@ test("help-json returns machine-readable onboarding data", async () => {
     const parsed = JSON.parse(extractJsonPayload(output)) as {
       overview: string;
       quickStart: string[];
+      contextual: { focus: string; reason: string; commands: string[] };
       commandGroups: Array<{ title: string; commands: string[] }>;
     };
 
     assert.match(parsed.overview, /pi-ready runtime-core product/i);
     assert.ok(parsed.quickStart.some(line => line.includes("config init")));
     assert.ok(parsed.quickStart.some(line => line.includes("harness help")));
+    assert.ok(parsed.contextual.focus.length > 0);
+    assert.ok(parsed.contextual.reason.length > 0);
+    assert.ok(parsed.contextual.commands.length > 0);
     assert.ok(parsed.commandGroups.some(group => group.title === "Operator Loop"));
     assert.ok(parsed.commandGroups.some(group => group.title === "Provider"));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("help-json switches to paused-recovery focus when runtime is blocked", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-help-blocked-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI help blocked demo", true);
+    await runtime.blockCurrentTask("waiting on API schema");
+
+    const output = await runCli(cwd, "/help-json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      contextual: { focus: string; commands: string[] };
+    };
+
+    assert.equal(parsed.contextual.focus, "paused-recovery");
+    assert.ok(parsed.contextual.commands.includes("harness blocked --json"));
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -275,6 +416,60 @@ test("artifacts-json can filter by artifact type", async () => {
 
     assert.ok(parsed.length > 0);
     assert.ok(parsed.every(item => item.type === "review"));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("artifacts inspect json returns latest artifact metadata and preview", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-artifact-inspect-latest-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI artifacts inspect latest demo", true);
+    await runtime.executeCurrentTask();
+    await runtime.verify();
+
+    const output = await runCli(cwd, "artifacts", "inspect", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      target: string;
+      resolvedBy: string;
+      artifact: { type: string; path: string };
+      preview: string[];
+    };
+
+    assert.equal(parsed.mode, "artifact-inspect");
+    assert.equal(parsed.target, "latest");
+    assert.equal(parsed.resolvedBy, "latest");
+    assert.ok(parsed.artifact.path.length > 0);
+    assert.ok(parsed.preview.length > 0);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("artifacts inspect json can resolve by artifact type", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-artifact-inspect-type-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI artifacts inspect type demo", true);
+    await runtime.executeCurrentTask();
+    await runtime.verify();
+    await runtime.review();
+
+    const output = await runCli(cwd, "artifacts", "inspect", "review", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      resolvedBy: string;
+      artifact: { type: string; path: string };
+      preview: string[];
+    };
+
+    assert.equal(parsed.mode, "artifact-inspect");
+    assert.equal(parsed.resolvedBy, "type");
+    assert.equal(parsed.artifact.type, "review");
+    assert.ok(parsed.artifact.path.includes("/reviews/"));
+    assert.ok(parsed.preview.length > 0);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -376,13 +571,24 @@ test("doctor-json reports shell readiness and next steps", async () => {
     const output = await runCli(cwd, "doctor", "--json");
     const parsed = JSON.parse(extractJsonPayload(output)) as {
       mode: string;
-      tools: Array<{ name: string; installed: boolean; required: boolean }>;
+      ready: boolean;
+      tools: Array<{ name: string; installed: boolean; required: boolean; installCommand: string }>;
       nextSteps: string[];
+      firstRunCommands: string[];
+      validationTracks: Array<{ kind: string; commands: string[] }>;
+      recommendedCommand: string;
     };
 
     assert.equal(parsed.mode, "doctor");
+    assert.equal(typeof parsed.ready, "boolean");
     assert.ok(parsed.tools.some(item => item.name === "node"));
+    assert.ok(parsed.tools.every(item => item.installCommand.length > 0));
     assert.ok(parsed.nextSteps.length > 0);
+    assert.ok(parsed.firstRunCommands.length > 0);
+    assert.ok(parsed.validationTracks.some(track => track.kind === "local"));
+    assert.ok(parsed.validationTracks.some(track => track.kind === "interactive"));
+    assert.ok(parsed.validationTracks.some(track => track.kind === "release"));
+    assert.ok(parsed.recommendedCommand.length > 0);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -393,6 +599,9 @@ test("plain doctor output stays onboarding-only without runtime panel", async ()
   try {
     const output = await runCli(cwd, "doctor");
     assert.match(output, /Tools:/);
+    assert.match(output, /Recommended:/);
+    assert.match(output, /First-run commands:/);
+    assert.match(output, /Validation tracks:/);
     assert.doesNotMatch(output, /^Phase:/m);
   } finally {
     await rm(cwd, { recursive: true, force: true });
@@ -405,10 +614,16 @@ test("bootstrap-json reports preset guidance", async () => {
     const output = await runCli(cwd, "bootstrap", "--json");
     const parsed = JSON.parse(extractJsonPayload(output)) as {
       mode: string;
+      recommendedPreset: string;
+      recommendedReason: string;
+      nextCommands: string[];
       presets: Array<{ id: string; kickoff: string }>;
     };
 
     assert.equal(parsed.mode, "bootstrap");
+    assert.ok(parsed.recommendedPreset.length > 0);
+    assert.ok(parsed.recommendedReason.length > 0);
+    assert.ok(parsed.nextCommands.length > 0);
     assert.ok(parsed.presets.some(item => item.id === "node-cli"));
     assert.ok(parsed.presets.some(item => /longrun/.test(item.kickoff)));
   } finally {
@@ -711,6 +926,28 @@ test("bin entry supports product-style longrun --json subcommands", async () => 
   }
 });
 
+test("bin entry supports product-style auto --json subcommands", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-bin-auto-subcmd-"));
+  try {
+    const output = await runBinWithArgs("--cwd", cwd, "auto", "--json", "--steps", "0", "CLI auto subcommand demo");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      startedNewPlan: boolean;
+      specPath: string | null;
+      planPath: string | null;
+      stopReason: string;
+    };
+
+    assert.equal(parsed.mode, "auto");
+    assert.equal(parsed.startedNewPlan, true);
+    assert.match(parsed.specPath ?? "", /spec\.md$/);
+    assert.match(parsed.planPath ?? "", /plan\.md$/);
+    assert.equal(parsed.stopReason, "max_steps");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("bin entry supports product-style provider smoke --json subcommands", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-bin-provider-smoke-subcmd-"));
   const server = createServer((_, res) => {
@@ -895,6 +1132,68 @@ test("loop-json returns machine-readable completion steps without panel text", a
   }
 });
 
+test("auto-json starts a new autonomous goal loop from idle", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-auto-idle-"));
+  try {
+    const output = await runCli(cwd, "auto", "--json", "--steps", "0", "CLI auto idle demo");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      entry: string;
+      startedNewPlan: boolean;
+      specPath: string | null;
+      planPath: string | null;
+      milestonePath: string | null;
+      stopReason: string;
+      nextAction: string | null;
+    };
+
+    assert.equal(parsed.mode, "auto");
+    assert.equal(parsed.entry, "planned");
+    assert.equal(parsed.startedNewPlan, true);
+    assert.match(parsed.specPath ?? "", /spec\.md$/);
+    assert.match(parsed.planPath ?? "", /plan\.md$/);
+    assert.match(parsed.milestonePath ?? "", /milestones\.md$/);
+    assert.equal(parsed.stopReason, "max_steps");
+    assert.match(parsed.nextAction ?? "", /\/continue|\/execute|\/verify/);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("auto-json resumes an active goal and can complete the loop", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-auto-resume-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI auto resume demo", true);
+    const taskState = runtime.getTaskStateSnapshot();
+    taskState.taskVerificationCommands.T2 = ["printf verified"];
+    taskState.taskVerificationCommands.T3 = ["printf verified"];
+    const { saveTaskState } = await import("../packages/harness-runtime/src/state/task-state.js");
+    await saveTaskState(join(cwd, ".harness", "artifacts", "task-state.json"), taskState);
+
+    const output = await runCli(cwd, "auto", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      entry: string;
+      startedNewPlan: boolean;
+      completed: boolean;
+      stopReason: string;
+      finalPhase: string;
+      steps: string[];
+    };
+
+    assert.equal(parsed.mode, "auto");
+    assert.equal(parsed.entry, "continued");
+    assert.equal(parsed.startedNewPlan, false);
+    assert.equal(parsed.completed, true);
+    assert.equal(parsed.stopReason, "completed");
+    assert.equal(parsed.finalPhase, "completed");
+    assert.ok(parsed.steps.length > 0);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("review-json returns a machine-readable review artifact payload", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-review-"));
   try {
@@ -958,10 +1257,71 @@ test("review diff and deep expose richer mode-specific payloads", async () => {
     const deepParsed = JSON.parse(extractJsonPayload(deepOutput)) as {
       mode: string;
       history: string[];
+      synthesis: string[];
     };
 
     assert.equal(deepParsed.mode, "deep");
     assert.ok(Array.isArray(deepParsed.history));
+    assert.ok(Array.isArray(deepParsed.synthesis));
+    assert.ok(deepParsed.synthesis.some(line => line.startsWith("History count:")));
+    assert.ok(deepParsed.synthesis.some(line => line.startsWith("Verification context:")));
+    assert.ok(deepParsed.synthesis.some(line => line.startsWith("Recommended next move:")));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("review compare json returns compare metadata and synthesized refs", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-review-compare-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI review compare demo", true);
+    await runtime.executeCurrentTask();
+    await runtime.verify();
+    await runtime.review();
+
+    const output = await runCli(cwd, "review", "compare", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      comparedRefs: string[];
+      preview: string[];
+      synthesis: string[];
+      status: { phase: string };
+    };
+
+    assert.equal(parsed.mode, "compare");
+    assert.ok(parsed.comparedRefs.length >= 2);
+    assert.ok(parsed.preview.length > 0);
+    assert.ok(parsed.synthesis.some(line => line.startsWith("Compared refs:")));
+    assert.ok(parsed.synthesis.some(line => line.startsWith("Recommended next move:")));
+    assert.ok(["paused", "completed"].includes(parsed.status.phase));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("review compare ignores preserved handoff when review and verification are absent", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-review-compare-reset-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI review compare reset demo", true);
+    await runtime.createHandoff();
+    await runtime.reset();
+
+    const output = await runCli(cwd, "review", "compare", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      path: string;
+      comparedRefs: string[];
+      history: string[];
+      synthesis: string[];
+    };
+
+    assert.equal(parsed.mode, "compare");
+    assert.equal(parsed.path, "(compare)");
+    assert.deepEqual(parsed.comparedRefs, []);
+    assert.ok(parsed.history.some(item => item.includes("handoff:")));
+    assert.ok(parsed.synthesis.some(line => line.includes("(none)")));
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -1118,6 +1478,55 @@ test("recent-json returns recent artifact recall payload", async () => {
   }
 });
 
+test("recent-json supports failure recall presets", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-recent-failures-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI recent failures demo", true);
+    await runtime.verify();
+
+    const output = await runCli(cwd, "recent", "failures", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      query: string;
+      matches: string[];
+      groups: Array<{ label: string }>;
+    };
+
+    assert.equal(parsed.mode, "recent");
+    assert.equal(parsed.query, "failures");
+    assert.ok(parsed.matches.some(line => line.includes("/verifications/")));
+    assert.ok(parsed.groups.some(group => group.label === "recent failures"));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("recent-json supports active-task recall presets", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-recent-active-task-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI recent active-task demo", true);
+    await runtime.executeCurrentTask();
+    await runtime.verify();
+
+    const output = await runCli(cwd, "recent", "active-task", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      query: string;
+      matches: string[];
+      groups: Array<{ label: string }>;
+    };
+
+    assert.equal(parsed.mode, "recent");
+    assert.equal(parsed.query, "active-task");
+    assert.ok(parsed.matches.length > 0);
+    assert.ok(parsed.groups.some(group => group.label === "recent active-task"));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("recent-json groups unfiltered artifacts by type", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-recent-groups-"));
   try {
@@ -1189,7 +1598,7 @@ test("queue review json reports review-related work", async () => {
     const parsed = JSON.parse(extractJsonPayload(output)) as {
       mode: string;
       queue: string;
-      items: Array<{ kind: string; label: string; priority: string; rationale: string }>;
+      items: Array<{ kind: string; label: string; priority: string; rationale: string; score: number; recommendedCommand: string }>;
     };
 
     assert.equal(parsed.mode, "queue");
@@ -1197,6 +1606,9 @@ test("queue review json reports review-related work", async () => {
     assert.ok(parsed.items.length > 0);
     assert.equal(parsed.items[0]?.priority, "high");
     assert.ok(parsed.items.some(item => item.rationale.length > 0));
+    assert.equal(typeof parsed.items[0]?.score, "number");
+    assert.ok(parsed.items[0]?.recommendedCommand.length > 0);
+    assert.ok((parsed.items[0]?.score ?? 0) >= (parsed.items[1]?.score ?? 0));
     assert.equal(new Set(parsed.items.filter(item => item.priority === "high").map(item => item.label)).size, parsed.items.filter(item => item.priority === "high").length);
   } finally {
     await rm(cwd, { recursive: true, force: true });
@@ -1216,6 +1628,9 @@ test("pickup-json reports the next safe work recommendation", async () => {
       target: string | null;
       rationale: string;
       nextAction: string | null;
+      recommendedCommand: string;
+      alternatives: string[];
+      urgency: string;
     };
 
     assert.equal(parsed.mode, "pickup");
@@ -1223,6 +1638,92 @@ test("pickup-json reports the next safe work recommendation", async () => {
     assert.equal(parsed.target, "T1");
     assert.match(parsed.rationale, /active task|runtime/i);
     assert.match(parsed.nextAction ?? "", /\/continue/);
+    assert.equal(parsed.recommendedCommand, "harness continue");
+    assert.ok(parsed.alternatives.length > 0);
+    assert.ok(["high", "medium", "low"].includes(parsed.urgency));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("pickup-json reports blocked-state recommendations explicitly", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-pickup-blocked-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI pickup blocked demo", true);
+    await runtime.blockCurrentTask("waiting on schema");
+
+    const output = await runCli(cwd, "pickup", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      pickupKind: string;
+      recommendedCommand: string;
+      alternatives: string[];
+      urgency: string;
+    };
+
+    assert.equal(parsed.pickupKind, "blocked");
+    assert.equal(parsed.recommendedCommand, "harness blocked --json");
+    assert.ok(parsed.alternatives.includes("harness unblock"));
+    assert.equal(parsed.urgency, "high");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("pickup-json reports waiting-state recommendations explicitly", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-pickup-waiting-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI pickup waiting demo", true);
+    const taskState = runtime.getTaskStateSnapshot();
+    taskState.activeTaskId = null;
+    taskState.tasks.T1 = "todo";
+    taskState.taskDependencies.T1 = ["T2"];
+    taskState.tasks.T2 = "blocked";
+    taskState.taskBlockers.T2 = "dependency pending";
+    const { saveTaskState } = await import("../packages/harness-runtime/src/state/task-state.js");
+    await saveTaskState(join(cwd, ".harness", "artifacts", "task-state.json"), taskState);
+    const { createInitialRunState } = await import("../packages/harness-runtime/src/runtime/harness-runtime.js");
+    const { loadRunState, saveRunState } = await import("../packages/harness-runtime/src/state/run-state.js");
+    const runStatePath = join(cwd, ".harness", "state", "run-state.json");
+    const runState = await loadRunState(runStatePath, createInitialRunState());
+    await saveRunState(runStatePath, {
+      ...runState,
+      activeTaskId: null
+    });
+
+    const output = await runCli(cwd, "pickup", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      pickupKind: string;
+      recommendedCommand: string;
+      alternatives: string[];
+      urgency: string;
+    };
+
+    assert.equal(parsed.pickupKind, "waiting");
+    assert.equal(parsed.recommendedCommand, "harness status dashboard --json");
+    assert.ok(parsed.alternatives.includes("harness blocked --json"));
+    assert.equal(parsed.urgency, "low");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("pickup-json reports idle-state recommendations explicitly", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-pickup-idle-"));
+  try {
+    const output = await runCli(cwd, "pickup", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      pickupKind: string;
+      recommendedCommand: string;
+      alternatives: string[];
+      urgency: string;
+    };
+
+    assert.equal(parsed.pickupKind, "idle");
+    assert.equal(parsed.recommendedCommand, "harness auto <goal>");
+    assert.ok(parsed.alternatives.includes("harness plan <goal>"));
+    assert.equal(parsed.urgency, "low");
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -1413,16 +1914,63 @@ test("timeline-json reports runtime and artifact timeline events", async () => {
     await runtime.plan("CLI timeline demo", true);
     await runtime.executeCurrentTask();
     await runtime.verify();
+    await runtime.createHandoff();
 
     const output = await runCli(cwd, "timeline", "--json");
     const parsed = JSON.parse(extractJsonPayload(output)) as {
       mode: string;
       items: Array<{ kind: string; label: string }>;
+      recovery: {
+        latestFailurePath: string | null;
+        latestPassPath: string | null;
+        latestReviewPath: string | null;
+        latestHandoffPath: string | null;
+        blocker: string | null;
+        recoveryHint: string | null;
+        recommendation: string | null;
+      };
     };
 
     assert.equal(parsed.mode, "timeline");
     assert.ok(parsed.items.some(item => item.kind === "runtime"));
     assert.ok(parsed.items.some(item => item.kind === "artifact"));
+    assert.ok(parsed.recovery.latestPassPath === null || parsed.recovery.latestPassPath.includes("/verifications/"));
+    assert.ok(parsed.recovery.latestHandoffPath === null || parsed.recovery.latestHandoffPath.includes("/handoffs/"));
+    assert.equal(parsed.recovery.blocker, null);
+    assert.equal(parsed.recovery.recoveryHint, null);
+    assert.ok(typeof parsed.recovery.recommendation === "string" || parsed.recovery.recommendation === null);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("timeline-json exposes blocker and recovery hint when runtime is paused on failure", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-timeline-recovery-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI timeline recovery demo", true);
+    await runtime.advanceMilestone();
+    const taskState = runtime.getTaskStateSnapshot();
+    taskState.taskVerificationCommands.T2 = ["node -e \"process.exit(1)\""];
+    taskState.taskDependencies.T2 = [];
+    const { saveTaskState } = await import("../packages/harness-runtime/src/state/task-state.js");
+    await saveTaskState(join(cwd, ".harness", "artifacts", "task-state.json"), taskState);
+    const refreshed = await HarnessRuntime.create(cwd);
+    await refreshed.executeCurrentTask();
+    await refreshed.verify();
+
+    const output = await runCli(cwd, "timeline", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      recovery: {
+        latestFailurePath: string | null;
+        blocker: string | null;
+        recoveryHint: string | null;
+      };
+    };
+
+    assert.ok(parsed.recovery.latestFailurePath?.includes("/verifications/"));
+    assert.ok(parsed.recovery.blocker);
+    assert.equal(parsed.recovery.recoveryHint, "implementation_fix_required");
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -1459,6 +2007,89 @@ test("handoff-json returns a machine-readable handoff artifact path", async () =
     assert.match(parsed.path, /handoffs\/.+\.md$/);
     assert.equal(parsed.status.phase, "planning");
     assert.equal(parsed.status.activeTaskId, "T1");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("handoff inspect json exposes latest handoff preview and cleanup recommendation", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-handoff-inspect-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI handoff inspect demo", true);
+    const handoffPath = await runtime.createHandoff();
+
+    const output = await runCli(cwd, "handoff", "inspect", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      path: string | null;
+      preview: string[];
+      cleanupEligible: boolean;
+      cleanupRecommendation: string;
+    };
+
+    assert.equal(parsed.mode, "handoff-inspect");
+    assert.equal(parsed.path, handoffPath);
+    assert.ok(parsed.preview.length > 0);
+    assert.equal(parsed.cleanupEligible, false);
+    assert.match(parsed.cleanupRecommendation, /active|Keep/i);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("handoff cleanup json clears preserved handoff pointers in safe states", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-handoff-cleanup-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI handoff cleanup demo", true);
+    const handoffPath = await runtime.createHandoff();
+    await runtime.reset();
+
+    const output = await runCli(cwd, "handoff", "cleanup", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      cleared: boolean;
+      previousPath: string | null;
+      remainingPath: string | null;
+      status: { lastHandoffPath: string | null; phase: string };
+    };
+
+    assert.equal(parsed.mode, "handoff-cleanup");
+    assert.equal(parsed.cleared, true);
+    assert.equal(parsed.previousPath, handoffPath);
+    assert.equal(parsed.remainingPath, null);
+    assert.equal(parsed.status.lastHandoffPath, null);
+    assert.equal(parsed.status.phase, "idle");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("handoff cleanup json refuses to clear preserved handoff while runtime is active", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-handoff-cleanup-active-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI handoff cleanup active demo", true);
+    const handoffPath = await runtime.createHandoff();
+
+    const output = await runCli(cwd, "handoff", "cleanup", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      mode: string;
+      cleared: boolean;
+      previousPath: string | null;
+      remainingPath: string | null;
+      reason: string;
+      status: { lastHandoffPath: string | null; phase: string };
+    };
+
+    assert.equal(parsed.mode, "handoff-cleanup");
+    assert.equal(parsed.cleared, false);
+    assert.equal(parsed.previousPath, handoffPath);
+    assert.equal(parsed.remainingPath, handoffPath);
+    assert.match(parsed.reason, /inactive/i);
+    assert.equal(parsed.status.lastHandoffPath, handoffPath);
+    assert.equal(parsed.status.phase, "planning");
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

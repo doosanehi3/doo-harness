@@ -15,6 +15,13 @@ The current implementation supports:
 - role-aware task execution (`planner`, `worker`, `validator`)
 - phase-aware and task-aware tool policy
 - machine-readable status and artifact surfaces
+- pi-hosted operator surfaces including:
+  - `status today`
+  - `status readiness`
+  - `status ship`
+  - `status lanes`
+  - `review compare`
+  - `handoff inspect` / `handoff cleanup`
 - role-based model selection via `.harness/config.json`
 - OpenAI-compatible provider path with chat-completions and responses-style payload support
 - request option forwarding for provider-backed models (`temperature`, `maxTokens`)
@@ -136,12 +143,29 @@ HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- provider check
 HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- provider smoke
 ```
 
+If you want the fastest product-surface orientation instead of raw setup steps:
+
+```bash
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- doctor --json
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- status readiness --json
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- status today --json
+```
+
 Start a long-running task:
 
 ```bash
 HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- longrun "Describe the task here"
 HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- continue
 HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- status
+```
+
+Recommended operator loop once the repo is configured:
+
+```bash
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- status today --json
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- auto --json "Describe the task here"
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- status dashboard --json
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- status ship --json
 ```
 
 If you want machine-readable automation surfaces instead of text output:
@@ -172,12 +196,19 @@ Available command surface through `/harness`:
 
 - `help`
 - `status`
+- `status today`
+- `status readiness`
+- `status ship`
+- `status lanes`
 - `plan`
 - `longrun`
 - `continue`
 - `verify`
 - `review`
+- `review compare`
 - `handoff`
+- `handoff inspect`
+- `handoff cleanup`
 - `reset`
 - `resume`
 
@@ -227,6 +258,10 @@ Primary commands:
 
 - `help`
 - `status [--json]`
+- `status today [--json]`
+- `status readiness [--json]`
+- `status ship [--json]`
+- `status lanes [--json]`
 - `plan [--json] <goal>`
 - `longrun [--json] <goal>`
 - `continue [--json]`
@@ -234,13 +269,20 @@ Primary commands:
 - `execute [--json]`
 - `verify [--json]`
 - `review [--json]`
+- `review compare [--json]`
 - `advance [--json]`
 - `handoff [--json]`
+- `handoff inspect [--json]`
+- `handoff cleanup [--json]`
 - `reset [--json]`
 - `resume [--json]`
 - `block [--json] <reason>`
 - `unblock [--json]`
 - `artifacts [--json]`
+- `artifacts inspect [--json] [type|path]`
+- `artifacts related [--json] [taskId]`
+- `timeline [--json]`
+- `recent [--json] review|verification|handoff|failures|active-task`
 - `provider check [--json]`
 - `provider doctor [--json]`
 - `provider smoke [--json] [role]`
@@ -258,6 +300,13 @@ Primary commands:
 4. Drive execution with `continue`, `status`, `review`, `handoff`, and `reset` as needed.
 5. Use `provider smoke` if you need to confirm the active model/provider path before bigger work.
 6. Use `web smoke` when the target repo exposes a `start` script and you want a quick runtime check of the generated app.
+
+If you want the shortest “where am I / what next / can I ship” path:
+
+1. `status today --json`
+2. `status dashboard --json`
+3. `status readiness --json`
+4. `status ship --json`
 
 ## Current Limitations
 
