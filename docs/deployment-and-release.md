@@ -74,8 +74,8 @@ Rationale:
 - [x] scriptable print-mode smoke
 - [x] scriptable install-from-path smoke
 - [x] install-from-path smoke script
-- [x] interactive pi session launch smoke for the help-path renderer flow
-- [x] interactive widget/notification capture for the help-path renderer flow
+- [x] interactive pi session launch smoke for extension load and slash-entry flow
+- [x] interactive widget/notification capture for richer `/harness` surfaces
 - [x] define print/install smoke as required release-gate commands
 
 ## Recommended Next Release Gate

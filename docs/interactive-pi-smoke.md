@@ -39,14 +39,13 @@ pnpm run smoke:pi:interactive
 This drives a real interactive pi session through `expect` and checks:
 
 - extension load visibility
-- `/harness help --json` slash-command acceptance
-- notification text for the help path
-- widget lines rendered by the real interactive session for the help path
+- interactive slash-command palette entry
+- real terminal acceptance of the first `/` command-mode step
 
-The current scripted renderer pass intentionally validates the most stable
-interactive path first. Dashboard and other richer renderer surfaces are still
-best checked through the existing handler/widget smoke plus targeted manual
-inspection when needed.
+The current scripted renderer pass intentionally validates the most stable real
+interactive invariants first. Richer `/harness ...` renderer surfaces are still
+best covered by the existing `smoke:pi:ui` path plus targeted manual inspection
+when needed.
 
 Prerequisites for this scripted path:
 
@@ -62,11 +61,13 @@ pi --no-extensions -e /absolute/path/to/harness/packages/extensions/src/pi-exten
 ## Manual Checks
 
 1. Startup shows the extension in the loaded extensions list
-2. Enter `/harness help --json`
-3. Enter `/harness status --json`
-4. Confirm the command is accepted as a slash command rather than treated as a
+2. Enter `/`
+3. Confirm the slash-command palette opens in the real session
+4. Enter `/harness help --json`
+5. Enter `/harness status --json`
+6. Confirm the command is accepted as a slash command rather than treated as a
    plain natural-language prompt
-5. Confirm output appears through the expected extension path:
+7. Confirm output appears through the expected extension path:
    - notification
    - widget
    - or non-UI fallback when applicable
@@ -74,8 +75,9 @@ pi --no-extensions -e /absolute/path/to/harness/packages/extensions/src/pi-exten
 ## Expected Result
 
 - the Harness extension loads without crashing the session
-- `/harness` is recognized
-- help/status payloads are reachable from an actual interactive pi session
+- interactive slash-command entry works in the real pi session
+- richer `/harness` payload validation is covered by `smoke:pi:ui` plus manual
+  inspection when needed
 
 ## Current Note
 

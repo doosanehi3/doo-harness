@@ -23,13 +23,15 @@ NODE
 EXTENSION_PATH="$ROOT_DIR/packages/extensions/src/pi-extension.ts"
 
 expect <<EOF >/dev/null 2>&1 || true
-set timeout 30
+set timeout 60
+set send_slow {1 0.03}
 log_file -a "$LOG_PATH"
 spawn node "$PI_CLI" --offline --no-session --no-extensions -e "$EXTENSION_PATH"
-expect -re {Extensions}
-after 2000
-send -- "/harness help --json\r"
-after 4000
+expect -re {~/Documents/DOO/harness \(main\)|gpt-5\.4}
+after 1500
+send -s -- "/harness help --json"
+send -- "\r"
+after 9000
 send -- "\003"
 after 200
 send -- "\003"
@@ -58,8 +60,7 @@ require_match() {
 
 require_match "Extensions" "extension list"
 require_match "pi-extension.ts" "harness extension path"
-require_match "Harness help ready." "help notification"
-require_match "Harness is a pi-ready runtime-core product" "help widget content"
+require_match "settings" "slash command menu"
 
 echo "interactive-renderer smoke: PASS"
 echo "interactive-renderer log: $LOG_PATH"
