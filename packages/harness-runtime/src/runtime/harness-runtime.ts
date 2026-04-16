@@ -1317,6 +1317,7 @@ export class HarnessRuntime {
 
   getRelatedArtifactsPayload(taskId: string | null = this.session.taskState.activeTaskId ?? this.session.state.activeTaskId): RelatedArtifactsPayload {
     const status = this.getStatus();
+    const targetIsActiveTask = taskId === (this.session.taskState.activeTaskId ?? this.session.state.activeTaskId);
     const items: RelatedArtifactEntry[] = [];
     const seen = new Set<string>();
     const push = (entry: RelatedArtifactEntry) => {
@@ -1350,7 +1351,7 @@ export class HarnessRuntime {
 
     {
       const exactVerificationPath = taskId ? this.session.taskState.taskVerificationPaths[taskId] ?? null : null;
-      const fallbackVerificationPath = this.session.state.lastVerificationPath;
+      const fallbackVerificationPath = targetIsActiveTask ? this.session.state.lastVerificationPath : null;
       if (exactVerificationPath || fallbackVerificationPath) {
       push({
         kind: "artifact",
@@ -1363,7 +1364,7 @@ export class HarnessRuntime {
     }
     {
       const exactReviewPath = taskId ? this.session.taskState.taskReviewPaths[taskId] ?? null : null;
-      const fallbackReviewPath = this.session.state.lastReviewPath;
+      const fallbackReviewPath = targetIsActiveTask ? this.session.state.lastReviewPath : null;
       if (exactReviewPath || fallbackReviewPath) {
       push({
         kind: "artifact",
@@ -1376,7 +1377,7 @@ export class HarnessRuntime {
     }
     {
       const exactHandoffPath = taskId ? this.session.taskState.taskHandoffPaths[taskId] ?? null : null;
-      const fallbackHandoffPath = this.session.state.lastHandoffPath;
+      const fallbackHandoffPath = targetIsActiveTask ? this.session.state.lastHandoffPath : null;
       if (exactHandoffPath || fallbackHandoffPath) {
       push({
         kind: "artifact",

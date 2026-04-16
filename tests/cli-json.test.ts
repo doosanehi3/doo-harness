@@ -1805,8 +1805,31 @@ test("artifacts related for a non-active task marks session artifacts as support
     assert.equal(parsed.mode, "related");
     assert.equal(parsed.targetTaskId, "T9");
     assert.ok(parsed.items.some(item => item.type === "task-output" && item.relevance === "exact"));
-    assert.ok(parsed.items.some(item => item.type === "verification" && item.relevance === "supporting"));
-    assert.ok(parsed.groups.some(group => group.label === "supporting"));
+    assert.ok(!parsed.items.some(item => item.type === "verification" && item.relevance === "supporting"));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("artifacts-json ordering stays deterministic when timestamps tie", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-artifacts-order-tie-"));
+  try {
+    const { mkdir, writeFile, utimes } = await import("node:fs/promises");
+    const base = join(cwd, ".harness", "artifacts", "reviews");
+    await mkdir(base, { recursive: true });
+    const older = join(base, "2026-04-16T00-00-00.000Z.md");
+    const newer = join(base, "2026-04-16T00-00-00.001Z.md");
+    await writeFile(older, "older\n", "utf8");
+    await writeFile(newer, "newer\n", "utf8");
+    const sameTime = new Date("2026-04-16T00:00:00.000Z");
+    await utimes(older, sameTime, sameTime);
+    await utimes(newer, sameTime, sameTime);
+
+    const output = await runCli(cwd, "artifacts", "review", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as Array<{ path: string }>;
+
+    assert.equal(parsed[0]?.path, newer);
+    assert.equal(parsed[1]?.path, older);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

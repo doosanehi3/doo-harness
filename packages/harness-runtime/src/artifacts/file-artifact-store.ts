@@ -21,6 +21,18 @@ function artifactFilename(type: ArtifactType): string {
   return `${stamp}.md`;
 }
 
+function compareArtifactRecency(left: ArtifactMeta, right: ArtifactMeta): number {
+  const updated = right.updatedAt.localeCompare(left.updatedAt);
+  if (updated !== 0) {
+    return updated;
+  }
+  const created = right.createdAt.localeCompare(left.createdAt);
+  if (created !== 0) {
+    return created;
+  }
+  return right.path.localeCompare(left.path);
+}
+
 export class FileArtifactStore implements ArtifactStore {
   constructor(private readonly rootDir: string) {}
 
@@ -86,7 +98,7 @@ export class FileArtifactStore implements ArtifactStore {
         });
       }
     }
-    return metas.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    return metas.sort(compareArtifactRecency);
   }
 
   async latest(sessionId: string, type: ArtifactType): Promise<ArtifactMeta | null> {
