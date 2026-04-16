@@ -5,7 +5,7 @@ Harness CLI and the pi-hosted extension path.
 
 ## Required Tools
 
-- Node.js 22.x or newer
+- Node.js 20+ (Node.js 22.x recommended)
 - `pnpm`
 - `ripgrep` (`rg`) on `PATH`
 - `expect`

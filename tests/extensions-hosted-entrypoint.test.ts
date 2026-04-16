@@ -1,7 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import { AddressInfo } from "node:net";
+import { once } from "node:events";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -82,6 +85,91 @@ test("pi-hosted bridge exposes doctor and bootstrap onboarding surfaces", async 
     const invalidBootstrap = JSON.parse(invalidBootstrapOutput) as { error: string };
     assert.match(invalidBootstrap.error, /Unknown bootstrap preset/);
   } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("pi-hosted bridge exposes provider and web validation surfaces", async () => {
+  const cwd = await createTempHarnessDir();
+  const server = createServer((_, res) => {
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ choices: [{ message: { content: "READY" } }] }));
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    process.env.OPENAI_API_KEY = "test-key";
+    const address = server.address() as AddressInfo;
+    await mkdir(join(cwd, ".harness"), { recursive: true });
+    await writeFile(
+      join(cwd, ".harness", "config.json"),
+      JSON.stringify(
+        {
+          models: {
+            default: {
+              id: "gpt-test",
+              provider: "openai-compatible",
+              baseUrl: `http://127.0.0.1:${address.port}`
+            }
+          }
+        },
+        null,
+        2
+      ) + "\n",
+      "utf8"
+    );
+
+    const bridge = createPiHostedHarnessBridge({ cwd });
+
+    const providerDoctorOutput = await bridge.execute("provider doctor --json");
+    const providerDoctor = JSON.parse(providerDoctorOutput) as Array<{
+      role: string;
+      readiness: { status: string };
+    }>;
+    assert.equal(providerDoctor[0]?.role, "default");
+    assert.equal(providerDoctor[0]?.readiness.status, "ready");
+
+    await writeFile(
+      join(cwd, "package.json"),
+      JSON.stringify(
+        {
+          name: "web-smoke-demo",
+          private: true,
+          type: "module",
+          scripts: {
+            start: "node server.js"
+          }
+        },
+        null,
+        2
+      ) + "\n",
+      "utf8"
+    );
+    await writeFile(
+      join(cwd, "server.js"),
+      [
+        'import { createServer } from "node:http";',
+        "const port = Number(process.env.PORT || 4173);",
+        'const html = "<!doctype html><html><head><title>Hosted Web Smoke</title></head><body><h1>Hosted Web Smoke</h1></body></html>";',
+        "const server = createServer((_req, res) => {",
+        '  res.writeHead(200, { "content-type": "text/html; charset=utf-8" });',
+        "  res.end(html);",
+        "});",
+        "server.listen(port, '127.0.0.1', () => {",
+        "  console.log(`READY http://127.0.0.1:${port}`);",
+        "});"
+      ].join("\n") + "\n",
+      "utf8"
+    );
+
+    const webSmokeOutput = await bridge.execute("web smoke --json");
+    const webSmoke = JSON.parse(webSmokeOutput) as { success: boolean; title: string };
+    assert.equal(webSmoke.success, true);
+    assert.equal(webSmoke.title, "Hosted Web Smoke");
+  } finally {
+    delete process.env.OPENAI_API_KEY;
+    server.close();
     await rm(cwd, { recursive: true, force: true });
   }
 });

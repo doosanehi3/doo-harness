@@ -26,6 +26,9 @@ import { runLongRun } from "../../cli/src/commands/handlers/longrun.js";
 import { normalizeCommandString } from "../../cli/src/commands/normalize-input.js";
 import { buildBootstrapPayload, buildDoctorPayload, formatInvalidBootstrapPreset, parseBootstrapPreset, runBootstrap, runDoctor } from "../../cli/src/commands/handlers/onboarding.js";
 import { runPlan } from "../../cli/src/commands/handlers/plan.js";
+import { runProviderCheck } from "../../cli/src/commands/handlers/provider-check.js";
+import { runProviderDoctor } from "../../cli/src/commands/handlers/provider-doctor.js";
+import { runProviderSmoke } from "../../cli/src/commands/handlers/provider-smoke.js";
 import { buildRecentPayload, parseRecentQuery, runRecent } from "../../cli/src/commands/handlers/recent.js";
 import { runReset } from "../../cli/src/commands/handlers/reset.js";
 import { runResume } from "../../cli/src/commands/handlers/resume.js";
@@ -57,6 +60,8 @@ import {
   runStatus
 } from "../../cli/src/commands/handlers/status.js";
 import { runVerify } from "../../cli/src/commands/handlers/verify.js";
+import { runWebSmoke } from "../../cli/src/commands/handlers/web-smoke.js";
+import { runWebVerify } from "../../cli/src/commands/handlers/web-verify.js";
 
 export interface PiHostedHarnessHost {
   cwd: string;
@@ -123,6 +128,42 @@ async function executeHostedCommand(runtime: HarnessRuntime, cwd: string, input:
   }
   if (trimmed === "/doctor-json") {
     return JSON.stringify(await buildDoctorPayload(cwd, runtime.getProviderReadiness()), null, 2);
+  }
+  if (trimmed === "/provider-check") {
+    return runProviderCheck(runtime.getProviderReadiness());
+  }
+  if (trimmed === "/provider-check-json") {
+    return JSON.stringify(runtime.getProviderReadiness(), null, 2);
+  }
+  if (trimmed === "/provider-doctor") {
+    return runProviderDoctor(await runtime.doctorProviders());
+  }
+  if (trimmed === "/provider-doctor-json") {
+    return JSON.stringify(await runtime.doctorProviders(), null, 2);
+  }
+  if (trimmed.startsWith("/provider-smoke-json")) {
+    const role = trimmed.replace(/^\/provider-smoke-json\s*/, "").trim();
+    const target =
+      role === "planner" || role === "worker" || role === "validator" ? role : "default";
+    return JSON.stringify(await runtime.smokeProvider(target), null, 2);
+  }
+  if (trimmed.startsWith("/provider-smoke")) {
+    const role = trimmed.replace(/^\/provider-smoke\s*/, "").trim();
+    const target =
+      role === "planner" || role === "worker" || role === "validator" ? role : "default";
+    return runProviderSmoke(await runtime.smokeProvider(target));
+  }
+  if (trimmed === "/web-smoke") {
+    return runWebSmoke(await runtime.smokeWebApp());
+  }
+  if (trimmed === "/web-smoke-json") {
+    return JSON.stringify(await runtime.smokeWebApp(), null, 2);
+  }
+  if (trimmed === "/web-verify") {
+    return runWebVerify(await runtime.verifyWebApp());
+  }
+  if (trimmed === "/web-verify-json") {
+    return JSON.stringify(await runtime.verifyWebApp(), null, 2);
   }
   if (trimmed === "/status") {
     return runStatus(statusPayload);
