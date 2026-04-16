@@ -57,6 +57,10 @@ The current shape is therefore:
 - independent workflow/runtime core
 - selective reuse of `pi` auth and provider transport layers
 
+For local workspace development, internal packages currently resolve from
+source rather than package-local `dist` output so the real pi-hosted path sees
+the same source of truth as the CLI/test path.
+
 Long term, the likely product direction is to keep the long-running runtime
 local while moving more substrate concerns onto `pi-coding-agent`.
 See [docs/architecture/pi-integration.md](docs/architecture/pi-integration.md).

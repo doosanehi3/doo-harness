@@ -9,6 +9,22 @@ import {
   writeDefaultRuntimeConfig
 } from "../packages/harness-runtime/src/config/runtime-config.js";
 
+test("workspace ai and agent-core packages resolve from source during local development", async () => {
+  const aiPackage = JSON.parse(await readFile(join(process.cwd(), "packages", "ai", "package.json"), "utf8")) as {
+    main: string;
+    types: string;
+  };
+  const agentCorePackage = JSON.parse(await readFile(join(process.cwd(), "packages", "agent-core", "package.json"), "utf8")) as {
+    main: string;
+    types: string;
+  };
+
+  assert.equal(aiPackage.main, "./src/index.ts");
+  assert.equal(aiPackage.types, "./src/index.ts");
+  assert.equal(agentCorePackage.main, "./src/index.ts");
+  assert.equal(agentCorePackage.types, "./src/index.ts");
+});
+
 test("runtime loads role-specific model ids from config", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "doo-harness-config-"));
   try {
