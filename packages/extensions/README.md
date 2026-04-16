@@ -51,6 +51,7 @@ Then verify:
 ```bash
 /harness help --json
 /harness status today --json
+/harness status notes --json
 /harness status --json
 /harness status readiness --json
 /harness status ship --json
@@ -74,6 +75,7 @@ pnpm run smoke:pi:ui
   surface inside `pi`
 - the highest-signal operator entrypoints today are:
   - `/harness status today --json`
+  - `/harness status notes --json`
   - `/harness status dashboard --json`
   - `/harness status readiness --json`
   - `/harness status ship --json`

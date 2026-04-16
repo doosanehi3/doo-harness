@@ -17,6 +17,7 @@ The current implementation supports:
 - machine-readable status and artifact surfaces
 - pi-hosted operator surfaces including:
   - `status today`
+  - `status notes`
   - `status readiness`
   - `status ship`
   - `status lanes`
@@ -152,6 +153,7 @@ If you want the fastest product-surface orientation instead of raw setup steps:
 ```bash
 HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- doctor --json
 HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- status readiness --json
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- status notes --json
 HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- status today --json
 ```
 
@@ -169,6 +171,7 @@ Recommended operator loop once the repo is configured:
 HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- status today --json
 HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- auto --json "Describe the task here"
 HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- status dashboard --json
+HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- status notes --json
 HARNESS_CWD_OVERRIDE=/path/to/project pnpm run start -- status ship --json
 ```
 
@@ -200,6 +203,7 @@ Available command surface through `/harness`:
 
 - `help`
 - `status`
+- `status notes`
 - `status today`
 - `status readiness`
 - `status ship`
@@ -262,6 +266,7 @@ Primary commands:
 
 - `help`
 - `status [--json]`
+- `status notes [--json]`
 - `status today [--json]`
 - `status readiness [--json]`
 - `status ship [--json]`
@@ -310,7 +315,8 @@ If you want the shortest “where am I / what next / can I ship” path:
 1. `status today --json`
 2. `status dashboard --json`
 3. `status readiness --json`
-4. `status ship --json`
+4. `status notes --json`
+5. `status ship --json`
 
 ## Current Limitations
 
