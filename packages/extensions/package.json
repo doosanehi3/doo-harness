@@ -4,8 +4,8 @@
   "version": "0.0.1",
   "description": "Harness runtime extension surfaces for pi-coding-agent",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
   "keywords": [
     "pi-package",
     "harness",
