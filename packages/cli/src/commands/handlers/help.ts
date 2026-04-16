@@ -2,7 +2,7 @@ export interface HelpPayload {
   overview: string;
   quickStart: string[];
   contextual: {
-    focus: "onboarding" | "active-run" | "paused-recovery" | "idle-runtime";
+    focus: "onboarding" | "active-run" | "paused-recovery" | "idle-runtime" | "preserved-handoff";
     reason: string;
     commands: string[];
   };
@@ -17,6 +17,7 @@ export function buildHelpPayload(context?: {
   goalSummary?: string | null;
   blocker?: string | null;
   hasRuntimeConfig?: boolean;
+  hasPreservedHandoff?: boolean;
 }): HelpPayload {
   const focus =
     context?.blocker
@@ -28,9 +29,15 @@ export function buildHelpPayload(context?: {
       : context?.phase && context.phase !== "idle" && context.phase !== "completed" && context.phase !== "cancelled"
         ? {
             focus: "active-run" as const,
-            reason: "The runtime already has active work, so status and pickup surfaces come first.",
-            commands: ["harness status dashboard --json", "harness status lanes --json", "harness pickup --json"]
-          }
+          reason: "The runtime already has active work, so status and pickup surfaces come first.",
+          commands: ["harness status dashboard --json", "harness status lanes --json", "harness pickup --json"]
+        }
+        : context?.hasPreservedHandoff
+          ? {
+              focus: "preserved-handoff" as const,
+              reason: "The runtime is inactive but a preserved handoff exists, so handoff inspection comes first.",
+              commands: ["harness handoff inspect --json", "harness status dashboard --json", "harness status readiness --json"]
+            }
         : context?.hasRuntimeConfig === false
           ? {
               focus: "onboarding" as const,

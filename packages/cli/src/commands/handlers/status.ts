@@ -211,9 +211,15 @@ export function buildLaneStatusView(
 }
 
 export function buildReadinessStatusView(status: RuntimeStatus, doctor: DoctorPayload): ReadinessStatusView {
+  const hasPreservedHandoff =
+    status.lastHandoffPath !== null &&
+    (status.phase === "idle" || status.phase === "completed" || status.phase === "cancelled");
+  const recommendedCommand = hasPreservedHandoff ? "harness handoff inspect --json" : doctor.recommendedCommand;
   const summary = formatRecommendationSummary(
-    doctor.recommendedCommand,
-    doctor.hasRuntimeConfig && doctor.providerReadiness.every(item => item.status === "ready")
+    recommendedCommand,
+    hasPreservedHandoff
+      ? "A preserved handoff exists, so inspecting that context comes before any new loop or ship action."
+      : doctor.hasRuntimeConfig && doctor.providerReadiness.every(item => item.status === "ready")
       ? "Core setup looks usable, so the next step is validating or shipping."
       : "Readiness still depends on setup or provider fixes."
   );
@@ -223,7 +229,7 @@ export function buildReadinessStatusView(status: RuntimeStatus, doctor: DoctorPa
     configReady: doctor.hasRuntimeConfig,
     providerReady: doctor.providerReadiness.every(item => item.status === "ready"),
     handoffReady: status.handoffEligible,
-    recommendedCommand: doctor.recommendedCommand,
+    recommendedCommand,
     doctorSummary: doctor.summary,
     validationTracks: doctor.validationTracks
     ,
@@ -264,6 +270,11 @@ export function buildTodayStatusView(input: {
           input.status.nextAction ?? input.readiness.recommendedCommand,
           "The runtime is blocked, so recovery takes priority."
         )
+      : input.status.lastHandoffPath && (input.status.phase === "idle" || input.status.phase === "completed" || input.status.phase === "cancelled")
+        ? formatRecommendationSummary(
+            "harness handoff inspect --json",
+            "A preserved handoff exists, so reviewing that context comes before a new loop or ship pass."
+          )
       : input.status.phase === "idle" || input.status.phase === "completed" || input.status.phase === "cancelled"
         ? formatRecommendationSummary(
             input.readiness.recommendedCommand,

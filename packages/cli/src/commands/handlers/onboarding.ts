@@ -153,7 +153,7 @@ export async function buildDoctorPayload(
   const ready = missingRequired === 0 && existsSync(configPath) && !missingProvider;
   const recommendedCommand =
     missingRequired > 0
-      ? "Resolve the missing required tools first."
+      ? "harness doctor --json"
       : !existsSync(configPath)
         ? "harness config init openai-codex"
         : missingProvider

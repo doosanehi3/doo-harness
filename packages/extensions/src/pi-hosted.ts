@@ -99,7 +99,10 @@ async function executeHostedCommand(runtime: HarnessRuntime, cwd: string, input:
     phase: runtimeStatus.phase,
     goalSummary: runtimeStatus.goalSummary,
     blocker: runtimeStatus.blocker,
-    hasRuntimeConfig: existsSync(join(cwd, ".harness", "config.json"))
+    hasRuntimeConfig: existsSync(join(cwd, ".harness", "config.json")),
+    hasPreservedHandoff:
+      runtimeStatus.lastHandoffPath !== null &&
+      (runtimeStatus.phase === "idle" || runtimeStatus.phase === "completed" || runtimeStatus.phase === "cancelled")
   });
 
   if (trimmed === "/help") {
@@ -193,9 +196,13 @@ async function executeHostedCommand(runtime: HarnessRuntime, cwd: string, input:
   }
   if (trimmed === "/artifacts-inspect" || trimmed.startsWith("/artifacts-inspect ")) {
     const rawTarget = trimmed.replace(/^\/artifacts-inspect\s*/, "");
-    return runArtifactInspect(
-      await buildArtifactInspectPayload(await runtime.listArtifacts(), rawTarget, path => runtime.readArtifact(path))
-    );
+    try {
+      return runArtifactInspect(
+        await buildArtifactInspectPayload(await runtime.listArtifacts(), rawTarget, path => runtime.readArtifact(path))
+      );
+    } catch (error) {
+      return error instanceof Error ? error.message : "Unknown artifact target.";
+    }
   }
   if (trimmed === "/artifacts-json" || trimmed.startsWith("/artifacts-json ")) {
     const { filter, invalidFilter } = parseArtifactFilter(trimmed.replace(/^\/artifacts-json\s*/, ""));
@@ -207,11 +214,15 @@ async function executeHostedCommand(runtime: HarnessRuntime, cwd: string, input:
   }
   if (trimmed === "/artifacts-inspect-json" || trimmed.startsWith("/artifacts-inspect-json ")) {
     const rawTarget = trimmed.replace(/^\/artifacts-inspect-json\s*/, "");
-    return JSON.stringify(
-      await buildArtifactInspectPayload(await runtime.listArtifacts(), rawTarget, path => runtime.readArtifact(path)),
-      null,
-      2
-    );
+    try {
+      return JSON.stringify(
+        await buildArtifactInspectPayload(await runtime.listArtifacts(), rawTarget, path => runtime.readArtifact(path)),
+        null,
+        2
+      );
+    } catch (error) {
+      return JSON.stringify({ error: error instanceof Error ? error.message : "Unknown artifact target." }, null, 2);
+    }
   }
   if (trimmed === "/artifacts-related" || trimmed.startsWith("/artifacts-related ")) {
     const rawTaskId = trimmed.replace(/^\/artifacts-related\s*/, "").trim();
@@ -347,9 +358,13 @@ async function executeHostedCommand(runtime: HarnessRuntime, cwd: string, input:
       return runReview(await buildCompareReviewPayload(artifacts, runtime.getStatus(), path => runtime.readArtifact(path)));
     }
     if (subcommand === "artifact") {
-      return runReview(
-        await buildArtifactReviewPayload(rest.join(" "), artifacts, runtime.getStatus(), path => runtime.readArtifact(path))
-      );
+      try {
+        return runReview(
+          await buildArtifactReviewPayload(rest.join(" "), artifacts, runtime.getStatus(), path => runtime.readArtifact(path))
+        );
+      } catch (error) {
+        return error instanceof Error ? error.message : "Unknown review artifact target.";
+      }
     }
     const mode: ReviewMode = subcommand === "diff" || subcommand === "deep" ? subcommand : "quick";
     const target = mode === "diff" ? rest.join(" ") || null : null;
@@ -382,19 +397,23 @@ async function executeHostedCommand(runtime: HarnessRuntime, cwd: string, input:
       );
     }
     if (subcommand === "artifact") {
-      return JSON.stringify(
-        {
-          ...(await buildArtifactReviewPayload(
-            rest.join(" "),
-            artifacts,
-            runtime.getStatus(),
-            path => runtime.readArtifact(path)
-          )),
-          status: runtime.getStatus()
-        },
-        null,
-        2
-      );
+      try {
+        return JSON.stringify(
+          {
+            ...(await buildArtifactReviewPayload(
+              rest.join(" "),
+              artifacts,
+              runtime.getStatus(),
+              path => runtime.readArtifact(path)
+            )),
+            status: runtime.getStatus()
+          },
+          null,
+          2
+        );
+      } catch (error) {
+        return JSON.stringify({ error: error instanceof Error ? error.message : "Unknown review artifact target." }, null, 2);
+      }
     }
     const mode: ReviewMode = subcommand === "diff" || subcommand === "deep" ? subcommand : "quick";
     const target = mode === "diff" ? rest.join(" ") || null : null;
@@ -418,7 +437,7 @@ async function executeHostedCommand(runtime: HarnessRuntime, cwd: string, input:
     return runHandoff(await runtime.createHandoff());
   }
   if (trimmed === "/handoff-json") {
-    return JSON.stringify({ path: await runtime.createHandoff() }, null, 2);
+    return JSON.stringify({ path: await runtime.createHandoff(), status: runtime.getStatus() }, null, 2);
   }
   if (trimmed === "/handoff-inspect" || trimmed === "/handoff inspect") {
     const status = runtime.getStatus();

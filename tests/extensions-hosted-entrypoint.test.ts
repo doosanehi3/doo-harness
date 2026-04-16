@@ -28,6 +28,17 @@ test("pi-hosted bridge returns machine-readable help payload", async () => {
     assert.ok(parsed.contextual.focus.length > 0);
     assert.ok(parsed.contextual.commands.length > 0);
     assert.ok(parsed.commandGroups.some(group => group.title === "Operator Loop"));
+
+    const runtime = await bridge.getRuntime();
+    await runtime.plan("Hosted help preserved handoff demo", true);
+    await runtime.createHandoff();
+    await runtime.reset();
+    const handoffHelpOutput = await bridge.execute("/help-json");
+    const handoffHelp = JSON.parse(handoffHelpOutput) as {
+      contextual: { focus: string; commands: string[] };
+    };
+    assert.equal(handoffHelp.contextual.focus, "preserved-handoff");
+    assert.ok(handoffHelp.contextual.commands.includes("harness handoff inspect --json"));
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -140,6 +151,14 @@ test("pi-hosted bridge can plan and expose runtime status", async () => {
     assert.equal(today.activeLane.taskId, "T1");
     assert.ok(today.readinessRecommendedCommand.length > 0);
     assert.ok(today.shipRecommendedCommand.length > 0);
+
+    const handoffOutput = await bridge.execute("handoff --json");
+    const handoff = JSON.parse(handoffOutput) as {
+      path: string;
+      status: { phase: string; activeTaskId: string | null };
+    };
+    assert.match(handoff.path, /handoffs\/.+\.md$/);
+    assert.equal(handoff.status.activeTaskId, "T1");
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

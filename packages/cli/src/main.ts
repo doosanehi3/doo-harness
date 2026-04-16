@@ -121,7 +121,10 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
     phase: runtimeStatus.phase,
     goalSummary: runtimeStatus.goalSummary,
     blocker: runtimeStatus.blocker,
-    hasRuntimeConfig: existsSync(join(runtimeCwd, ".harness", "config.json"))
+    hasRuntimeConfig: existsSync(join(runtimeCwd, ".harness", "config.json")),
+    hasPreservedHandoff:
+      runtimeStatus.lastHandoffPath !== null &&
+      (runtimeStatus.phase === "idle" || runtimeStatus.phase === "completed" || runtimeStatus.phase === "cancelled")
   });
 
   if (trimmed === "" || trimmed === "/status") {
@@ -236,7 +239,11 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
 
   if (trimmed === "/artifacts-inspect" || trimmed.startsWith("/artifacts-inspect ")) {
     const rawTarget = trimmed.replace(/^\/artifacts-inspect\s*/, "");
-    return runArtifactInspect(await buildArtifactInspectPayload(await runtime.listArtifacts(), rawTarget, path => runtime.readArtifact(path)));
+    try {
+      return runArtifactInspect(await buildArtifactInspectPayload(await runtime.listArtifacts(), rawTarget, path => runtime.readArtifact(path)));
+    } catch (error) {
+      return error instanceof Error ? error.message : "Unknown artifact target.";
+    }
   }
 
   if (trimmed === "/artifacts-json" || trimmed.startsWith("/artifacts-json ")) {
@@ -250,11 +257,15 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
 
   if (trimmed === "/artifacts-inspect-json" || trimmed.startsWith("/artifacts-inspect-json ")) {
     const rawTarget = trimmed.replace(/^\/artifacts-inspect-json\s*/, "");
-    return JSON.stringify(
-      await buildArtifactInspectPayload(await runtime.listArtifacts(), rawTarget, path => runtime.readArtifact(path)),
-      null,
-      2
-    );
+    try {
+      return JSON.stringify(
+        await buildArtifactInspectPayload(await runtime.listArtifacts(), rawTarget, path => runtime.readArtifact(path)),
+        null,
+        2
+      );
+    } catch (error) {
+      return JSON.stringify({ error: error instanceof Error ? error.message : "Unknown artifact target." }, null, 2);
+    }
   }
 
   if (trimmed === "/artifacts-related" || trimmed.startsWith("/artifacts-related ")) {
@@ -612,9 +623,13 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
       return runReview(await buildCompareReviewPayload(artifacts, runtime.getStatus(), path => runtime.readArtifact(path)));
     }
     if (subcommand === "artifact") {
-      return runReview(
-        await buildArtifactReviewPayload(rest.join(" "), artifacts, runtime.getStatus(), path => runtime.readArtifact(path))
-      );
+      try {
+        return runReview(
+          await buildArtifactReviewPayload(rest.join(" "), artifacts, runtime.getStatus(), path => runtime.readArtifact(path))
+        );
+      } catch (error) {
+        return error instanceof Error ? error.message : "Unknown review artifact target.";
+      }
     }
     const mode: ReviewMode = subcommand === "diff" || subcommand === "deep" ? subcommand : "quick";
     const target = mode === "diff" ? rest.join(" ") || null : null;
@@ -648,19 +663,23 @@ async function execute(runtime: HarnessRuntime, rawInput: string, runtimeCwd: st
       );
     }
     if (subcommand === "artifact") {
-      return JSON.stringify(
-        {
-          ...(await buildArtifactReviewPayload(
-            rest.join(" "),
-            artifacts,
-            runtime.getStatus(),
-            path => runtime.readArtifact(path)
-          )),
-          status: runtime.getStatus()
-        },
-        null,
-        2
-      );
+      try {
+        return JSON.stringify(
+          {
+            ...(await buildArtifactReviewPayload(
+              rest.join(" "),
+              artifacts,
+              runtime.getStatus(),
+              path => runtime.readArtifact(path)
+            )),
+            status: runtime.getStatus()
+          },
+          null,
+          2
+        );
+      } catch (error) {
+        return JSON.stringify({ error: error instanceof Error ? error.message : "Unknown review artifact target." }, null, 2);
+      }
     }
     const mode: ReviewMode = subcommand === "diff" || subcommand === "deep" ? subcommand : "quick";
     const target = mode === "diff" ? rest.join(" ") || null : null;
@@ -764,21 +783,35 @@ export async function main(): Promise<void> {
   const shouldHidePanel =
     input === "/help" ||
     input === "/doctor" ||
+    input === "/auto" ||
+    input.startsWith("/auto ") ||
     input.startsWith("/auto-json") ||
     input === "/bootstrap" ||
     input === "/status-json" ||
     input === "/status-dashboard" ||
     input === "/status-dashboard-json" ||
+    input === "/status-today" ||
     input === "/status-today-json" ||
+    input === "/status today" ||
     input === "/status today --json" ||
+    input === "/status-ship" ||
     input === "/status-ship-json" ||
+    input === "/status ship" ||
     input === "/status ship --json" ||
+    input === "/status-readiness" ||
     input === "/status-readiness-json" ||
+    input === "/status readiness" ||
     input === "/status readiness --json" ||
+    input === "/status-lanes" ||
     input === "/status-lanes-json" ||
+    input === "/status lanes" ||
     input === "/status lanes --json" ||
+    input === "/handoff-inspect" ||
     input === "/handoff-inspect-json" ||
+    input === "/handoff inspect" ||
+    input === "/handoff-cleanup" ||
     input === "/handoff-cleanup-json" ||
+    input === "/handoff cleanup" ||
     input === "/handoff inspect --json" ||
     input === "/handoff cleanup --json" ||
     input === "/doctor-json" ||
@@ -796,7 +829,9 @@ export async function main(): Promise<void> {
     input === "/web-smoke-json" ||
     input === "/web-verify-json" ||
     input === "/artifacts-json" ||
+    input === "/artifacts-inspect" ||
     input.startsWith("/artifacts-inspect-json") ||
+    input.startsWith("/artifacts-inspect ") ||
     input.startsWith("/artifacts-related-json") ||
     input === "/advance-json" ||
     input === "/blocked-json" ||

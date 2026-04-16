@@ -159,7 +159,7 @@ test("status readiness json returns aggregated readiness guidance", async () => 
     assert.equal(typeof parsed.configReady, "boolean");
     assert.equal(typeof parsed.providerReady, "boolean");
     assert.equal(typeof parsed.handoffReady, "boolean");
-    assert.ok(parsed.recommendedCommand.length > 0);
+    assert.match(parsed.recommendedCommand, /^(harness|pnpm run)/);
     assert.ok(parsed.summary.length > 0);
     assert.ok(parsed.validationTracks.some(track => track.kind === "local"));
     assert.ok(parsed.validationTracks.some(track => track.kind === "interactive"));
@@ -184,7 +184,7 @@ test("status ship json returns release checklist and release note sections", asy
 
     assert.equal(parsed.mode, "ship");
     assert.equal(typeof parsed.shipReady, "boolean");
-    assert.ok(parsed.recommendedCommand.length > 0);
+    assert.match(parsed.recommendedCommand, /^(harness|pnpm run)/);
     assert.ok(parsed.summary.length > 0);
     assert.ok(parsed.releaseChecks.length > 0);
     assert.ok(parsed.releaseNotes.includes("Summary"));
@@ -223,8 +223,8 @@ test("status today json returns a single operator briefing payload", async () =>
     assert.equal(typeof parsed.reviewQueueCount, "number");
     assert.ok(parsed.pickupKind.length > 0);
     assert.equal(parsed.activeLane.taskId, "T1");
-    assert.ok(parsed.readinessRecommendedCommand.length > 0);
-    assert.ok(parsed.shipRecommendedCommand.length > 0);
+    assert.match(parsed.readinessRecommendedCommand, /^(harness|pnpm run)/);
+    assert.match(parsed.shipRecommendedCommand, /^(harness|pnpm run)/);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -339,6 +339,26 @@ test("help-json switches to paused-recovery focus when runtime is blocked", asyn
 
     assert.equal(parsed.contextual.focus, "paused-recovery");
     assert.ok(parsed.contextual.commands.includes("harness blocked --json"));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("help-json switches to preserved-handoff focus when the runtime is inactive with a preserved handoff", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-help-preserved-handoff-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI help preserved handoff demo", true);
+    await runtime.createHandoff();
+    await runtime.reset();
+
+    const output = await runCli(cwd, "/help-json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as {
+      contextual: { focus: string; commands: string[] };
+    };
+
+    assert.equal(parsed.contextual.focus, "preserved-handoff");
+    assert.ok(parsed.contextual.commands.includes("harness handoff inspect --json"));
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -475,6 +495,17 @@ test("artifacts inspect json can resolve by artifact type", async () => {
   }
 });
 
+test("artifacts inspect json returns a structured error for unknown targets", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-artifact-inspect-error-"));
+  try {
+    const output = await runCli(cwd, "artifacts", "inspect", "missing-target", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as { error: string };
+    assert.match(parsed.error, /Unknown artifact target/i);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("artifacts-json returns newest artifacts first by updatedAt", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-artifacts-order-"));
   try {
@@ -603,6 +634,24 @@ test("plain doctor output stays onboarding-only without runtime panel", async ()
     assert.match(output, /First-run commands:/);
     assert.match(output, /Validation tracks:/);
     assert.doesNotMatch(output, /^Phase:/m);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("plain today and artifact-inspect outputs stay standalone without runtime panel", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-plain-surface-"));
+  try {
+    const runtime = await HarnessRuntime.create(cwd);
+    await runtime.plan("CLI plain surface demo", true);
+    await runtime.executeCurrentTask();
+    await runtime.verify();
+
+    const todayOutput = await runCli(cwd, "status", "today");
+    assert.doesNotMatch(todayOutput, /^Flow:/m);
+
+    const inspectOutput = await runCli(cwd, "artifacts", "inspect");
+    assert.doesNotMatch(inspectOutput, /^Flow:/m);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -1380,6 +1429,17 @@ test("review artifact json inspects the selected artifact target", async () => {
     };
     assert.equal(byRelativePathParsed.mode, "artifact");
     assert.equal(byRelativePathParsed.path, verification.path);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("review artifact json returns a structured error for unknown targets", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "doo-harness-cli-review-artifact-error-"));
+  try {
+    const output = await runCli(cwd, "review", "artifact", "missing-target", "--json");
+    const parsed = JSON.parse(extractJsonPayload(output)) as { error: string };
+    assert.match(parsed.error, /Unknown review artifact target/i);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
